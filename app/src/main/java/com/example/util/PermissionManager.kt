@@ -11,18 +11,21 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.TextUtils
 import androidx.core.content.ContextCompat
 import com.example.alarm.MathWakeDeviceAdminReceiver
+import com.example.alarm.PowerMenuBlockerAccessibilityService
 
 data class LockdownPermissionStatus(
   val isOverlayGranted: Boolean,
   val isExactAlarmGranted: Boolean,
   val isNotificationGranted: Boolean,
   val isBatteryOptimizationIgnored: Boolean,
-  val isDeviceAdminActive: Boolean
+  val isDeviceAdminActive: Boolean,
+  val isAccessibilityEnabled: Boolean
 ) {
   val allCriticalGranted: Boolean
-    get() = isOverlayGranted && isExactAlarmGranted && isNotificationGranted && isBatteryOptimizationIgnored
+    get() = isOverlayGranted && isExactAlarmGranted && isNotificationGranted && isBatteryOptimizationIgnored && isAccessibilityEnabled
 
   val missingCount: Int
     get() {
@@ -32,6 +35,7 @@ data class LockdownPermissionStatus(
       if (!isNotificationGranted) count++
       if (!isBatteryOptimizationIgnored) count++
       if (!isDeviceAdminActive) count++
+      if (!isAccessibilityEnabled) count++
       return count
     }
 }
@@ -77,13 +81,33 @@ object PermissionManager {
     val componentName = ComponentName(context, MathWakeDeviceAdminReceiver::class.java)
     val isDeviceAdminActive = dpm?.isAdminActive(componentName) ?: false
 
+    // 6. Accessibility Service for power menu blocking
+    val isAccessibilityEnabled = isAccessibilityServiceEnabled(context)
+
     return LockdownPermissionStatus(
       isOverlayGranted = isOverlayGranted,
       isExactAlarmGranted = isExactAlarmGranted,
       isNotificationGranted = isNotificationGranted,
       isBatteryOptimizationIgnored = isBatteryOptimizationIgnored,
-      isDeviceAdminActive = isDeviceAdminActive
+      isDeviceAdminActive = isDeviceAdminActive,
+      isAccessibilityEnabled = isAccessibilityEnabled
     )
+  }
+
+  private fun isAccessibilityServiceEnabled(context: Context): Boolean {
+    val expected = ComponentName(context, PowerMenuBlockerAccessibilityService::class.java).flattenToString()
+    val enabled = Settings.Secure.getString(
+      context.contentResolver,
+      Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+    ) ?: return false
+    val splitter = TextUtils.SimpleStringSplitter(':')
+    splitter.setString(enabled)
+    while (splitter.hasNext()) {
+      if (splitter.next().equals(expected, ignoreCase = true)) {
+        return true
+      }
+    }
+    return false
   }
 
   fun requestOverlayPermission(context: Context) {
@@ -167,6 +191,17 @@ object PermissionManager {
       } catch (_: Exception) {
         openAppDetails(context)
       }
+    }
+  }
+
+  fun requestAccessibilityPermission(context: Context) {
+    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    try {
+      context.startActivity(intent)
+    } catch (_: Exception) {
+      openAppDetails(context)
     }
   }
 
