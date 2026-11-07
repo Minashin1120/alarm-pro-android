@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">MathWake</string>
+    <string name="device_admin_description">アラーム鳴動中の脱出防止およびロック画面機能の保護に使用します。</string>
+</resources>

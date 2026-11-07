@@ -1,0 +1,6 @@
+{
+  "name": "MathWake",
+  "description": "数学問題を解くまで止まらない、二度寝防止アラームアプリ",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
