@@ -52,6 +52,24 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      - name: Ensure valid Gradle wrapper jar
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p gradle/wrapper
+          # Check if jar is valid (starts with PK zip magic)
+          if ! file gradle/wrapper/gradle-wrapper.jar | grep -q 'Zip archive' 2>/dev/null && ! head -c 2 gradle/wrapper/gradle-wrapper.jar 2>/dev/null | grep -q $'\x50\x4b'; then
+            echo "gradle-wrapper.jar is missing or invalid. Downloading official one..."
+            curl -sL -o gradle/wrapper/gradle-wrapper.jar \
+              https://github.com/gradle/gradle/raw/v9.3.1/gradle/wrapper/gradle-wrapper.jar
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -f gradle/wrapper/gradle-wrapper.jar
+            git commit -m "ci: add valid official gradle-wrapper.jar" || true
+            git push || true
+          else
+            echo "Valid gradle-wrapper.jar already present"
+          fi
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
