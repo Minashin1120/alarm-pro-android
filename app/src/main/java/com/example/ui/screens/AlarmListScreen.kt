@@ -100,6 +100,8 @@ fun AlarmListScreen(
   onPracticeClick: () -> Unit
 ) {
   val context = LocalContext.current
+  val fullyLocked = permissionStatus.isFullLockdownGranted
+  val fallbackReady = permissionStatus.allCriticalGranted
   var alarmToDelete by remember { mutableStateOf<AlarmEntity?>(null) }
   var testAlarmTarget by remember { mutableStateOf<AlarmEntity?>(null) }
 
@@ -147,7 +149,11 @@ fun AlarmListScreen(
             Icon(
               imageVector = Icons.Default.Security,
               contentDescription = "脱出防止設定",
-              tint = if (permissionStatus.allCriticalGranted) EmeraldSuccess else CrimsonAlarm
+              tint = when {
+                fullyLocked -> EmeraldSuccess
+                fallbackReady -> AmberPrimary
+                else -> CrimsonAlarm
+              }
             )
           }
 
@@ -213,13 +219,19 @@ fun AlarmListScreen(
           .padding(horizontal = 16.dp, vertical = 8.dp)
           .clip(RoundedCornerShape(16.dp))
           .background(
-            if (permissionStatus.allCriticalGranted) Slate900
-            else CrimsonAlarm.copy(alpha = 0.2f)
+            when {
+              fullyLocked -> Slate900
+              fallbackReady -> AmberPrimary.copy(alpha = 0.12f)
+              else -> CrimsonAlarm.copy(alpha = 0.2f)
+            }
           )
           .border(
             1.5.dp,
-            if (permissionStatus.allCriticalGranted) EmeraldSuccess.copy(alpha = 0.5f)
-            else CrimsonAlarm,
+            when {
+              fullyLocked -> EmeraldSuccess.copy(alpha = 0.5f)
+              fallbackReady -> AmberPrimary
+              else -> CrimsonAlarm
+            },
             RoundedCornerShape(16.dp)
           )
           .clickable { onOpenLockdownSetup() }
@@ -234,32 +246,45 @@ fun AlarmListScreen(
               .size(38.dp)
               .clip(CircleShape)
               .background(
-                if (permissionStatus.allCriticalGranted) EmeraldSuccess.copy(alpha = 0.2f)
-                else CrimsonAlarm.copy(alpha = 0.3f)
+                when {
+                  fullyLocked -> EmeraldSuccess.copy(alpha = 0.2f)
+                  fallbackReady -> AmberPrimary.copy(alpha = 0.2f)
+                  else -> CrimsonAlarm.copy(alpha = 0.3f)
+                }
               ),
             contentAlignment = Alignment.Center
           ) {
             Icon(
-              imageVector = if (permissionStatus.allCriticalGranted) Icons.Default.Security else Icons.Default.Warning,
+              imageVector = if (fullyLocked || fallbackReady) Icons.Default.Security else Icons.Default.Warning,
               contentDescription = null,
-              tint = if (permissionStatus.allCriticalGranted) EmeraldSuccess else CrimsonAlarm,
+              tint = when {
+                fullyLocked -> EmeraldSuccess
+                fallbackReady -> AmberPrimary
+                else -> CrimsonAlarm
+              },
               modifier = Modifier.size(22.dp)
             )
           }
           Spacer(modifier = Modifier.width(12.dp))
           Column(modifier = Modifier.weight(1f)) {
             Text(
-              text = if (permissionStatus.allCriticalGranted) "完全脱出防止システム: 有効"
-                     else "⚠️ 脱出防止の権限設定が必要です（${permissionStatus.missingCount}件未設定）",
+              text = when {
+                fullyLocked -> "完全脱出防止システム: 有効（Device Owner）"
+                fallbackReady -> "簡易遮断モード: 有効（Device Owner未設定）"
+                else -> "⚠️ 脱出防止の権限設定が必要です（${permissionStatus.missingCount}件未設定）"
+              },
               fontSize = 13.sp,
               fontWeight = FontWeight.Bold,
-              color = if (permissionStatus.allCriticalGranted) Slate100 else Color.White
+              color = if (fullyLocked || fallbackReady) Slate100 else Color.White
             )
             Text(
-              text = if (permissionStatus.allCriticalGranted) "全画面オーバーレイ・音量固定・正確なアラーム稼働中（タップで詳細）"
-                     else "【タップして今すぐ設定】画面重ねて表示などを許可しないとロック画面で強制起動できません",
+              text = when {
+                fullyLocked -> "電源メニュー・通知シェード・ロック画面をOSレベルで遮断中（タップで詳細）"
+                fallbackReady -> "ユーザー補助による遮断のみ。完全固定にはADBでDevice Owner設定が必要（タップで詳細）"
+                else -> "【タップして今すぐ設定】画面重ねて表示などを許可しないとロック画面で強制起動できません"
+              },
               fontSize = 11.sp,
-              color = if (permissionStatus.allCriticalGranted) Slate400 else AmberPrimary,
+              color = if (fullyLocked) Slate400 else AmberPrimary,
               lineHeight = 15.sp
             )
           }

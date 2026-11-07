@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.alarm.AlarmScheduler
 import com.example.alarm.AlarmService
+import com.example.alarm.LockTaskController
 import com.example.math.MathProblem
 import com.example.math.MathProblemGenerator
 import com.example.ui.theme.AmberPrimary
@@ -152,7 +153,9 @@ class ActiveAlarmActivity : ComponentActivity() {
 
   override fun onResume() {
     super.onResume()
-    try { startLockTask() } catch (_: Exception) {}
+    // Device Owner: enter fully-locked kiosk mode (blocks power menu, shade and keyguard).
+    // Non-Device-Owner installs fall back to the accessibility service.
+    LockTaskController.enter(this)
     AlarmService.notifyActivityResumed()
     setupStatusBarBlocker()
     applyImmersiveSystemBars()
@@ -357,9 +360,7 @@ class ActiveAlarmActivity : ComponentActivity() {
     clearDeviceAdminKeyguardLock()
     removeStatusBarBlocker()
 
-    try {
-      stopLockTask()
-    } catch (_: Exception) {}
+    LockTaskController.exit(this)
 
     val stopIntent = Intent(this, AlarmService::class.java).apply {
       action = AlarmService.ACTION_STOP_ALARM

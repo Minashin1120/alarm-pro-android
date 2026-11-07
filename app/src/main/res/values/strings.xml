@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">MathWake</string>
     <string name="device_admin_description">アラーム鳴動中の脱出防止およびロック画面機能の保護に使用します。</string>
-    <string name="accessibility_service_description">アラーム鳴動中に電源メニュー（電源オフ・再起動）が開かれた場合に自動で閉じて、アラームを終了させないようにします。</string>
+    <string name="accessibility_service_description">アラーム鳴動中に通知シェードや電源メニュー（電源オフ・再起動）が開かれた場合に自動で閉じて、アラームを終了させないようにします。</string>
 </resources>

@@ -99,9 +99,14 @@ fun MathWakeApp(viewModel: AlarmViewModel = viewModel()) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
-    // Prompt lockdown setup if critical overlay permission or exact alarm is missing
+    // Prompt lockdown setup if a required permission is missing.
+    // Device Owner is a manual ADB step, so it is shown in the dialog but not auto-prompted.
     val current = PermissionManager.checkStatus(context)
-    if (!current.isOverlayGranted || !current.isExactAlarmGranted) {
+    if (!current.isOverlayGranted ||
+      !current.isExactAlarmGranted ||
+      !current.isDeviceAdminActive ||
+      !current.isAccessibilityEnabled
+    ) {
       isLockdownSetupDialogOpen = true
     }
 

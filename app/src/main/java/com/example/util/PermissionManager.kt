@@ -22,10 +22,20 @@ data class LockdownPermissionStatus(
   val isNotificationGranted: Boolean,
   val isBatteryOptimizationIgnored: Boolean,
   val isDeviceAdminActive: Boolean,
-  val isAccessibilityEnabled: Boolean
+  val isAccessibilityEnabled: Boolean,
+  val isDeviceOwner: Boolean
 ) {
+  /**
+   * Minimum setup for the accessibility-based fallback.
+   * Full OS-level blocking additionally requires [isDeviceOwner].
+   */
   val allCriticalGranted: Boolean
-    get() = isOverlayGranted && isExactAlarmGranted && isNotificationGranted && isBatteryOptimizationIgnored && isAccessibilityEnabled
+    get() = isOverlayGranted && isExactAlarmGranted && isNotificationGranted &&
+      isBatteryOptimizationIgnored && isAccessibilityEnabled
+
+  /** True when the power menu / notification shade can be blocked at OS level. */
+  val isFullLockdownGranted: Boolean
+    get() = allCriticalGranted && isDeviceAdminActive && isDeviceOwner
 
   val missingCount: Int
     get() {
@@ -81,7 +91,10 @@ object PermissionManager {
     val componentName = ComponentName(context, MathWakeDeviceAdminReceiver::class.java)
     val isDeviceAdminActive = dpm?.isAdminActive(componentName) ?: false
 
-    // 6. Accessibility Service for power menu blocking
+    // 6. Device Owner (required for OS-level lock task / power menu blocking)
+    val isDeviceOwner = dpm?.isDeviceOwnerApp(context.packageName) ?: false
+
+    // 7. Accessibility Service (fallback for non-Device-Owner installs)
     val isAccessibilityEnabled = isAccessibilityServiceEnabled(context)
 
     return LockdownPermissionStatus(
@@ -90,12 +103,23 @@ object PermissionManager {
       isNotificationGranted = isNotificationGranted,
       isBatteryOptimizationIgnored = isBatteryOptimizationIgnored,
       isDeviceAdminActive = isDeviceAdminActive,
-      isAccessibilityEnabled = isAccessibilityEnabled
+      isAccessibilityEnabled = isAccessibilityEnabled,
+      isDeviceOwner = isDeviceOwner
     )
   }
 
   private fun isAccessibilityServiceEnabled(context: Context): Boolean {
-    val expected = ComponentName(context, PowerMenuBlockerAccessibilityService::class.java).flattenToString()
+    val accessibilityEnabled = Settings.Secure.getInt(
+      context.contentResolver,
+      Settings.Secure.ACCESSIBILITY_ENABLED,
+      0
+    ) == 1
+    if (!accessibilityEnabled) return false
+
+    val expected = ComponentName(
+      context,
+      PowerMenuBlockerAccessibilityService::class.java
+    ).flattenToString()
     val enabled = Settings.Secure.getString(
       context.contentResolver,
       Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
@@ -108,6 +132,15 @@ object PermissionManager {
       }
     }
     return false
+  }
+
+  /**
+   * Command for the user to run once from a PC with USB debugging enabled.
+   * Device Owner cannot be granted from inside the app.
+   */
+  fun deviceOwnerProvisioningCommand(context: Context): String {
+    val component = ComponentName(context, MathWakeDeviceAdminReceiver::class.java)
+    return "adb shell dpm set-device-owner ${component.flattenToShortString()}"
   }
 
   fun requestOverlayPermission(context: Context) {

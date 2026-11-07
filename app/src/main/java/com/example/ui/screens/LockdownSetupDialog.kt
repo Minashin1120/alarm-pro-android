@@ -1,6 +1,9 @@
 package com.example.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +25,7 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
@@ -121,15 +125,22 @@ fun LockdownSetupDialog(
                 .size(40.dp)
                 .clip(CircleShape)
                 .background(
-                  if (status.allCriticalGranted) EmeraldSuccess.copy(alpha = 0.2f)
-                  else CrimsonAlarm.copy(alpha = 0.2f)
+                  when {
+                    status.isFullLockdownGranted -> EmeraldSuccess.copy(alpha = 0.2f)
+                    status.allCriticalGranted -> AmberPrimary.copy(alpha = 0.2f)
+                    else -> CrimsonAlarm.copy(alpha = 0.2f)
+                  }
                 ),
               contentAlignment = Alignment.Center
             ) {
               Icon(
                 imageVector = Icons.Default.Security,
                 contentDescription = null,
-                tint = if (status.allCriticalGranted) EmeraldSuccess else CrimsonAlarm,
+                tint = when {
+                  status.isFullLockdownGranted -> EmeraldSuccess
+                  status.allCriticalGranted -> AmberPrimary
+                  else -> CrimsonAlarm
+                },
                 modifier = Modifier.size(24.dp)
               )
             }
@@ -142,10 +153,17 @@ fun LockdownSetupDialog(
                 color = Slate100
               )
               Text(
-                text = if (status.allCriticalGranted) "すべての必須権限が有効です"
-                       else "${status.missingCount} 件の必須権限が未設定です",
+                text = when {
+                  status.isFullLockdownGranted -> "OSレベルの完全ロックダウンが有効です"
+                  status.allCriticalGranted -> "簡易遮断モード（Device Owner未設定）"
+                  else -> "${status.missingCount} 件の必須権限が未設定です"
+                },
                 fontSize = 12.sp,
-                color = if (status.allCriticalGranted) EmeraldSuccess else CrimsonAlarm,
+                color = when {
+                  status.isFullLockdownGranted -> EmeraldSuccess
+                  status.allCriticalGranted -> AmberPrimary
+                  else -> CrimsonAlarm
+                },
                 fontWeight = FontWeight.SemiBold
               )
             }
@@ -243,6 +261,39 @@ fun LockdownSetupDialog(
           }
         )
 
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 6. Accessibility Service (fallback when Device Owner is unavailable)
+        PermissionItemCard(
+          title = "ユーザー補助サービス（通知シェード遮断）",
+          description = "アラーム鳴動中に通知シェードや電源メニューを検知して自動で閉じます。Android 14以降でAPKを直接インストールした場合は、アプリ情報 → 右上メニュー →「制限付き設定を許可」も必要です。",
+          isGranted = status.isAccessibilityEnabled,
+          icon = Icons.Default.Lock,
+          buttonText = "ユーザー補助を有効化",
+          onClick = {
+            PermissionManager.requestAccessibilityPermission(context)
+          }
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 7. Device Owner (real OS-level kiosk mode)
+        PermissionItemCard(
+          title = "完全ロックダウン（Device Owner）",
+          description = "電源メニュー・通知シェード・ロック画面・ホーム/履歴をOSレベルで無効化します。PCでUSBデバッグを有効にして、以下のコマンドを実行してください。\n\n" +
+            PermissionManager.deviceOwnerProvisioningCommand(context) +
+            "\n\n※端末にGoogleアカウントなどが残っていると失敗します。既にセットアップ済みの端末では初期化が必要な場合があります。",
+          isGranted = status.isDeviceOwner,
+          icon = Icons.Default.Security,
+          buttonText = "ADBコマンドをコピー",
+          onClick = {
+            val command = PermissionManager.deviceOwnerProvisioningCommand(context)
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("Device Owner command", command))
+            Toast.makeText(context, "ADBコマンドをコピーしました", Toast.LENGTH_SHORT).show()
+          }
+        )
+
         Spacer(modifier = Modifier.height(12.dp))
 
         // 6. Lockdown protection details explanation
@@ -270,7 +321,7 @@ fun LockdownSetupDialog(
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-              text = "・端末ロック中: ロック画面の上に全画面で最前面表示され、端末ロックを保持したままホームキーや他アプリへの離脱を遮断します。\n・通知欄の引き下げ遮断: 最上部のタッチ遮断シールドとStatusBarManagerにより、通知欄・クイック設定の展開を自動で即座に折り畳み・ブロックします。\n・カメラ起動の自動奪還: 電源ボタン2回押しでカメラが起動されても即座に検知してアラーム画面を最前面に引き戻します。",
+              text = "・Device Owner設定時: ロックタスクモードで電源メニュー・通知シェード・ロック画面・ホーム/履歴をOSレベルで無効化します。\n・未設定時: ユーザー補助サービスが通知シェード/電源メニューを検知して即座に閉じます。ただしAndroid 12以降では電源ボタン自体は横取りできないため、完全な遮断にはDevice Ownerが必要です。\n・端末ロック中: アラーム画面をロック画面の上に全画面表示し、他アプリへの離脱を防ぎます。",
               fontSize = 11.sp,
               color = Slate400,
               lineHeight = 16.sp
