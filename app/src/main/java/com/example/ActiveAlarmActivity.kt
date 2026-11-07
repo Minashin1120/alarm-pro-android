@@ -100,7 +100,7 @@ import com.example.ui.theme.OrangeAccent
 import com.example.ui.theme.SkyInfo
 import com.example.ui.theme.Slate100
 import com.example.ui.theme.Slate200
-import androidx.compose.ui.theme.Slate400
+import com.example.ui.theme.Slate400
 import com.example.ui.theme.Slate700
 import com.example.ui.theme.Slate800
 import com.example.ui.theme.Slate900
@@ -600,7 +600,7 @@ fun ActiveAlarmScreen(
               horizontalAlignment = Alignment.CenterHorizontally
             ) {
               Text(
-                text = currentProblem.question,
+                text = currentProblem.questionText,
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = Slate100,
