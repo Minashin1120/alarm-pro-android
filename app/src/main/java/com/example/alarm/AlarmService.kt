@@ -130,8 +130,8 @@ class AlarmService : Service() {
       startVibration()
     }
 
-    // 4. Volume Lockdown (if useDeviceVolume is false)
-    manageVolume(cachedUseDeviceVolume, cachedVolumePercent)
+    // 4. Volume + Ringer Mode Lockdown
+    manageVolumeAndRinger(cachedUseDeviceVolume, cachedVolumePercent)
 
     // 5. Watchdog to continuously pull screen to front if Camera or other activity interrupts
     startForegroundEnforcer()
@@ -274,30 +274,47 @@ class AlarmService : Service() {
     }
   }
 
-  private fun manageVolume(useDeviceVolume: Boolean, volumePercent: Int) {
+  private fun manageVolumeAndRinger(useDeviceVolume: Boolean, volumePercent: Int) {
     volumeLockJob?.cancel()
 
-    if (useDeviceVolume) {
-      return
+    val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+
+    // Always force ringer mode to NORMAL to prevent silent/vibrate from muting the alarm
+    try {
+      if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
+        audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+      }
+    } catch (e: Exception) {
+      Log.w("AlarmService", "Could not set initial ringer mode", e)
     }
 
-    val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-    val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
-    val targetVol = ((maxVol * volumePercent) / 100).coerceIn(1, maxVol)
+    if (!useDeviceVolume) {
+      val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+      val targetVol = ((maxVol * volumePercent) / 100).coerceIn(1, maxVol)
 
-    try {
-      audioManager.setStreamVolume(AudioManager.STREAM_ALARM, targetVol, 0)
-    } catch (e: Exception) {
-      Log.w("AlarmService", "Could not set initial alarm volume", e)
+      try {
+        audioManager.setStreamVolume(AudioManager.STREAM_ALARM, targetVol, 0)
+      } catch (e: Exception) {
+        Log.w("AlarmService", "Could not set initial alarm volume", e)
+      }
     }
 
     volumeLockJob = serviceScope.launch {
       while (isActive && isAlarmActive) {
-        delay(400)
+        delay(300)
         try {
-          val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
-          if (currentVol < targetVol) {
-            audioManager.setStreamVolume(AudioManager.STREAM_ALARM, targetVol, 0)
+          // Continuously force ringer mode back to NORMAL
+          if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
+            audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+          }
+
+          if (!useDeviceVolume) {
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+            val targetVol = ((maxVol * volumePercent) / 100).coerceIn(1, maxVol)
+            val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+            if (currentVol < targetVol) {
+              audioManager.setStreamVolume(AudioManager.STREAM_ALARM, targetVol, 0)
+            }
           }
         } catch (_: Exception) {
         }
