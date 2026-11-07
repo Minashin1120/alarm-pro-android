@@ -33,6 +33,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   build:
@@ -56,7 +57,6 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           mkdir -p gradle/wrapper
-          # Check if jar is valid (starts with PK zip magic)
           if ! file gradle/wrapper/gradle-wrapper.jar | grep -q 'Zip archive' 2>/dev/null && ! head -c 2 gradle/wrapper/gradle-wrapper.jar 2>/dev/null | grep -q $'\x50\x4b'; then
             echo "gradle-wrapper.jar is missing or invalid. Downloading official one..."
             curl -sL -o gradle/wrapper/gradle-wrapper.jar \
@@ -77,14 +77,11 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           mkdir -p ci
-
           if [ -s ci/debug.keystore ]; then
             echo "Using existing fixed ci/debug.keystore"
             exit 0
           fi
-
           echo "ci/debug.keystore is missing. Generating it once..."
-
           keytool -genkeypair -v \
             -keystore ci/debug.keystore \
             -storepass android \
@@ -94,10 +91,8 @@ jobs:
             -keysize 2048 \
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git add -f ci/debug.keystore
           git commit -m "ci: add fixed shared debug keystore"
           git push
@@ -106,13 +101,10 @@ jobs:
         run: |
           if [ ! -s ci/debug.keystore ]; then
             echo "ERROR: ci/debug.keystore not found or empty"
-            echo "Run Android CI on the default development branch once to bootstrap the fixed keystore."
             exit 1
           fi
-
           mkdir -p ~/.android
           cp ci/debug.keystore ~/.android/debug.keystore
-
           keytool -list -v \
             -keystore ci/debug.keystore \
             -storepass android \
@@ -126,4 +118,43 @@ jobs:
         with:
           name: app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 30
+          retention-days: 7
+
+      - name: Create GitHub Release with APK
+        if: github.event_name != 'pull_request' && success()
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ci-run-${{ github.run_number }}
+          name: CI Build ${{ github.run_number }}
+          body: |
+            Automatic build from commit ${{ github.sha }}
+            Run: ${{ github.run_id }}
+          files: app/build/outputs/apk/debug/app-debug.apk
+          draft: false
+          prerelease: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete old artifacts (keep only latest)
+        if: github.event_name != 'pull_request' && success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+            const sorted = artifacts.data.artifacts
+              .filter(a => a.name === 'app-debug')
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            // Keep the newest one, delete the rest
+            for (const art of sorted.slice(1)) {
+              console.log(`Deleting old artifact: ${art.id} (${art.created_at})`);
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: art.id
+              });
+            }
