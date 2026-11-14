@@ -140,20 +140,29 @@ AlarmScheduler.scheduleAlarm()
      （確認ダイアログが出るうえ、Android 12+ では電源メニューを塞げないため）。
    - `ActiveAlarmActivity.onResume()` で進入、`dismissAlarmAndExit()` で退出する。
 
-2. **Accessibility Service（Device Owner なしのベストエフォート）**
-   - `PowerMenuBlockerAccessibilityService` が System UI のウィンドウを監視。
+2. **Accessibility Service（Device Owner なしのベストエフォート / 任意）**
+   - `PowerMenuBlockerAccessibilityService` が System UI のウィンドウイベントを監視。
    - 通知シェード: `TYPE_ACCESSIBILITY_OVERLAY` の透明シールドでステータスバー上のスワイプを遮断し、
      検知時は `GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE` / `GLOBAL_ACTION_BACK` で閉じる。
    - 電源メニュー: 検知後に `GLOBAL_ACTION_BACK` で閉じ、短時間の全画面タッチブロッカーを出す。
    - **電源ボタン自体は横取りできない**ため、電源メニューは「開いた直後に閉じる」までが限界。
+   - **画面内容・キー入力は取得しない**。`accessibility_service_config.xml` では
+     `canRetrieveWindowContent` / `canRequestFilterKeyEvents` / `canPerformGestures` をすべて
+     false にし、イベントの `className` / `packageName` だけで検知する。
+     これらを true にすると銀行・決済アプリが「ユーザー補助をオフにしてください」と警告するため、
+     安易に戻さない。
+   - **任意機能として扱う**。`allCriticalGranted` に含めない。有効なままだと決済アプリの警告対象に
+     なり得るので、セットアップ UI からオフにできる導線を維持し、Device Owner 設定時は不要と案内する。
 
 ### 権限状態
 
 `PermissionManager.LockdownPermissionStatus` が唯一の判定元。
 
-- `allCriticalGranted`: Overlay / Exact Alarm / 通知 / 電池最適化除外 / Accessibility が揃った状態（簡易遮断モード）
+- `allCriticalGranted`: Overlay / Exact Alarm / 通知 / 電池最適化除外 が揃った状態（簡易遮断モード）。
+  Accessibility は**含めない**（任意機能）
 - `isFullLockdownGranted`: 上記 + Device Admin + **Device Owner**（完全ロックダウン）
-- `missingCount`: セットアップ UI の未設定件数
+- `isAccessibilityFallbackActive`: 任意の Accessibility フォールバックが有効かどうか（表示専用）
+- `missingCount`: セットアップ UI の未設定件数（Accessibility は数えない）
 
 権限を追加・変更したら、以下をすべて更新する。
 
@@ -227,6 +236,9 @@ adb shell dpm set-device-owner \
 - **Foreground Service**: Android 8+ は `startForegroundService()`、14+ は
   `foregroundServiceType="mediaPlayback"` と `FOREGROUND_SERVICE_MEDIA_PLAYBACK` が必須。
 - **Accessibility は OS に停止され得る**: バッテリー最適化除外やサービス再起動を前提にする。
+- **決済アプリの警告**: ユーザー補助サービスが有効なだけでも警告するアプリがある。
+  `canRetrieveWindowContent` / `canRequestFilterKeyEvents` を true に戻すと警告されやすい。
+  サービスは任意扱いなので、必須化・常時オンの誘導をしない。
 - **メーカー差**: Xiaomi / Samsung などは電源メニューのパッケージ名・クラス名が異なる。
   検知条件を追加するときは `isSystemUiPackage()` / `isPowerClass()` / `isShadeClass()` を拡張する。
 - **`EXPAND_STATUS_BAR` は補助**: 主たる遮断は overlay と Accessibility 側。

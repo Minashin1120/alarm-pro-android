@@ -26,16 +26,23 @@ data class LockdownPermissionStatus(
   val isDeviceOwner: Boolean
 ) {
   /**
-   * Minimum setup for the accessibility-based fallback.
-   * Full OS-level blocking additionally requires [isDeviceOwner].
+   * Minimum setup for reliable alarm delivery and lock-screen takeover.
+   *
+   * The accessibility service is deliberately *not* part of this set. It is an optional
+   * best-effort fallback, and keeping it enabled makes banking / payment apps warn the user,
+   * so the app must not require (or nag about) it.
    */
   val allCriticalGranted: Boolean
     get() = isOverlayGranted && isExactAlarmGranted && isNotificationGranted &&
-      isBatteryOptimizationIgnored && isAccessibilityEnabled
+      isBatteryOptimizationIgnored
 
   /** True when the power menu / notification shade can be blocked at OS level. */
   val isFullLockdownGranted: Boolean
     get() = allCriticalGranted && isDeviceAdminActive && isDeviceOwner
+
+  /** True when the optional accessibility fallback is currently enabled by the user. */
+  val isAccessibilityFallbackActive: Boolean
+    get() = isAccessibilityEnabled
 
   val missingCount: Int
     get() {
@@ -45,7 +52,6 @@ data class LockdownPermissionStatus(
       if (!isNotificationGranted) count++
       if (!isBatteryOptimizationIgnored) count++
       if (!isDeviceAdminActive) count++
-      if (!isAccessibilityEnabled) count++
       return count
     }
 }
@@ -94,7 +100,7 @@ object PermissionManager {
     // 6. Device Owner (required for OS-level lock task / power menu blocking)
     val isDeviceOwner = dpm?.isDeviceOwnerApp(context.packageName) ?: false
 
-    // 7. Accessibility Service (fallback for non-Device-Owner installs)
+    // 7. Accessibility Service (optional fallback for non-Device-Owner installs)
     val isAccessibilityEnabled = isAccessibilityServiceEnabled(context)
 
     return LockdownPermissionStatus(
@@ -228,6 +234,24 @@ object PermissionManager {
   }
 
   fun requestAccessibilityPermission(context: Context) {
+    // Open this service's own details page when possible so the user can toggle only this one.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val component = ComponentName(
+        context,
+        PowerMenuBlockerAccessibilityService::class.java
+      )
+      val details = Intent(Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS).apply {
+        data = Uri.parse("package:${component.flattenToString()}")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      try {
+        context.startActivity(details)
+        return
+      } catch (_: Exception) {
+        // Fall through to the accessibility service list.
+      }
+    }
+
     val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }

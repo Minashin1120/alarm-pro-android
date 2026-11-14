@@ -1,19 +1,15 @@
 package com.example.alarm
 
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.view.Gravity
-import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,14 +23,21 @@ import kotlinx.coroutines.launch
  * Fallback protection used when the app is not provisioned as Device Owner.
  *
  * A Device Owner gets real OS-level protection through [LockTaskController]. This service is the
- * best-effort layer for normal installs: it detects the notification shade / power menu in the
- * System UI window tree and closes it immediately.
+ * best-effort layer for normal installs: it notices that System UI opened the notification shade
+ * or the power menu while an alarm is ringing and closes it immediately.
+ *
+ * The service is intentionally unprivileged. It declares no window-content retrieval, no key event
+ * filtering and no gesture capability (see `res/xml/accessibility_service_config.xml`), because
+ * requesting those makes banking / payment apps warn the user about this app. Detection therefore
+ * relies only on the class names reported by accessibility window events.
  *
  * Important limitations on Android 12+:
  *  - The power button itself cannot be intercepted by a normal app or accessibility service.
  *  - The power menu is only closed *after* System UI opens it.
  *  - Android 14+ requires "Allow restricted settings" before a sideloaded APK can enable this
  *    accessibility service.
+ *  - Any enabled accessibility service can still be flagged by some banking apps. The service is
+ *    optional: Device Owner installs do not need it.
  */
 class PowerMenuBlockerAccessibilityService : AccessibilityService() {
 
@@ -48,19 +51,14 @@ class PowerMenuBlockerAccessibilityService : AccessibilityService() {
   private var powerBlockerHideAt = 0L
   private var powerBlockerConsumed = false
 
-  private data class SystemUiWindowState(
-    val powerMenu: Boolean,
-    val notificationShade: Boolean
-  )
-
   override fun onServiceConnected() {
     super.onServiceConnected()
 
+    // Subscribe to window changes only. No content retrieval / key filtering is requested here.
     serviceInfo?.let { info ->
-      info.flags = info.flags or
-        AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-        AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
-      info.eventTypes = info.eventTypes or AccessibilityEvent.TYPE_WINDOWS_CHANGED
+      info.eventTypes = info.eventTypes or
+        AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+        AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
       info.notificationTimeout = 50
       serviceInfo = info
     }
@@ -77,32 +75,11 @@ class PowerMenuBlockerAccessibilityService : AccessibilityService() {
       isPowerClass(className) -> {
         showPowerBlocker()
         closePowerMenu()
-        return
       }
       isShadeClass(className) && isSystemUiPackage(event?.packageName) -> {
         closeNotificationShade()
-        return
       }
     }
-
-    if (!isSystemUiPackage(event?.packageName)) return
-
-    val state = scanSystemUiWindows()
-    if (state.powerMenu) {
-      showPowerBlocker()
-      closePowerMenu()
-    } else if (state.notificationShade) {
-      closeNotificationShade()
-    }
-  }
-
-  override fun onKeyEvent(event: KeyEvent): Boolean {
-    // On most devices the power key is consumed by the system before accessibility services,
-    // but some OEMs deliver it. Consume both down and up to keep the event stream consistent.
-    if (AlarmService.isAlarmActive && event.keyCode == KeyEvent.KEYCODE_POWER) {
-      return true
-    }
-    return super.onKeyEvent(event)
   }
 
   override fun onInterrupt() {
@@ -130,80 +107,15 @@ class PowerMenuBlockerAccessibilityService : AccessibilityService() {
           if (powerBlockerView != null && now >= powerBlockerHideAt) {
             removePowerBlocker()
           }
-
-          val state = scanSystemUiWindows()
-          if (state.powerMenu) {
-            showPowerBlocker()
-            closePowerMenu()
-          } else {
-            // The user can interact normally again once the power menu is gone.
-            powerBlockerConsumed = false
-            removePowerBlocker()
-            if (state.notificationShade) {
-              closeNotificationShade()
-            }
-          }
         } else {
           removeTopShield()
           removePowerBlocker()
           powerBlockerConsumed = false
         }
-        delay(200)
+        // Stay cheap while idle; react quickly only while an alarm is actually ringing.
+        delay(if (AlarmService.isAlarmActive) ACTIVE_POLL_INTERVAL_MS else IDLE_POLL_INTERVAL_MS)
       }
     }
-  }
-
-  private fun scanSystemUiWindows(): SystemUiWindowState {
-    var powerMenu = false
-    var notificationShade = false
-    val screenHeight = resources.displayMetrics.heightPixels
-
-    val currentWindows = windows ?: return SystemUiWindowState(false, false)
-    for (window in currentWindows) {
-      if (!window.isActive && !window.isFocused) continue
-
-      val root = window.root ?: continue
-      try {
-        val packageName = root.packageName?.toString().orEmpty()
-        val className = root.className?.toString().orEmpty()
-        val lower = className.lowercase()
-
-        // Power menu detection does not depend on the package; OEMs move it around.
-        if (isPowerClass(lower)) {
-          powerMenu = true
-        }
-
-        if (isSystemUiPackage(packageName)) {
-          if (isShadeClass(lower)) {
-            val bounds = Rect()
-            window.getBoundsInScreen(bounds)
-            // The status bar window exists even when the shade is closed. Treat it as open only
-            // when it covers a large part of the screen, or when the class is a shade/QS panel.
-            val coversScreen = bounds.height() > screenHeight / 2
-            if (coversScreen ||
-              lower.contains("shade") ||
-              lower.contains("qspanel") ||
-              lower.contains("quicksettings") ||
-              lower.contains("notificationpanel")
-            ) {
-              notificationShade = true
-            }
-          }
-
-          // Text fallback for System UI variants without recognizable class names.
-          if (!powerMenu && containsPowerRelatedText(root)) {
-            powerMenu = true
-          }
-        }
-      } catch (_: Exception) {
-        // Window may disappear while it is being inspected.
-      } finally {
-        @Suppress("DEPRECATION")
-        root.recycle()
-      }
-    }
-
-    return SystemUiWindowState(powerMenu, notificationShade)
   }
 
   /**
@@ -361,51 +273,8 @@ class PowerMenuBlockerAccessibilityService : AccessibilityService() {
       pkg.contains("samsung.android.globalactions")
   }
 
-  private fun containsPowerRelatedText(
-    node: AccessibilityNodeInfo?,
-    depth: Int = 0
-  ): Boolean {
-    if (node == null || depth > 8) return false
-
-    val text = node.text?.toString().orEmpty()
-    val description = node.contentDescription?.toString().orEmpty()
-    val combined = "$text $description".lowercase()
-    if (POWER_KEYWORDS.any { combined.contains(it) }) {
-      return true
-    }
-
-    for (index in 0 until node.childCount) {
-      val child = node.getChild(index) ?: continue
-      try {
-        if (containsPowerRelatedText(child, depth + 1)) {
-          return true
-        }
-      } finally {
-        @Suppress("DEPRECATION")
-        child.recycle()
-      }
-    }
-    return false
-  }
-
   private companion object {
-    val POWER_KEYWORDS = listOf(
-      "power off",
-      "shut down",
-      "shutdown",
-      "restart",
-      "reboot",
-      "power menu",
-      "emergency",
-      "lockdown",
-      "電源オフ",
-      "電源を切る",
-      "再起動",
-      "シャットダウン",
-      "緊急通報",
-      "緊急",
-      "電源オプション",
-      "ロックダウン"
-    )
+    const val ACTIVE_POLL_INTERVAL_MS = 150L
+    const val IDLE_POLL_INTERVAL_MS = 500L
   }
 }
