@@ -234,24 +234,8 @@ object PermissionManager {
   }
 
   fun requestAccessibilityPermission(context: Context) {
-    // Open this service's own details page when possible so the user can toggle only this one.
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      val component = ComponentName(
-        context,
-        PowerMenuBlockerAccessibilityService::class.java
-      )
-      val details = Intent(Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS).apply {
-        data = Uri.parse("package:${component.flattenToString()}")
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      }
-      try {
-        context.startActivity(details)
-        return
-      } catch (_: Exception) {
-        // Fall through to the accessibility service list.
-      }
-    }
-
+    // Opens the accessibility service list. There is no public API to toggle this service
+    // programmatically, so the user turns MathWake on/off from here.
     val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
