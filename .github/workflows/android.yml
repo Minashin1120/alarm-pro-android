@@ -114,7 +114,26 @@ jobs:
         run: ./gradlew assembleDebug --stacktrace
 
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: |
+          set +e
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee unit-tests.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            # Job logs require a GitHub login; surface the failing tests as annotations.
+            python3 - <<'PY' | head -n 10
+          import glob
+          import xml.etree.ElementTree as ET
+
+          for path in glob.glob('app/build/test-results/testDebugUnitTest/*.xml'):
+              for case in ET.parse(path).getroot().iter('testcase'):
+                  failure = case.find('failure')
+                  if failure is not None:
+                      message = (failure.get('message') or 'assertion failed').splitlines()[0]
+                      print(f"::error::{case.get('classname')}.{case.get('name')}: {message}")
+          PY
+            grep -E "^e: " unit-tests.log | head -n 10 | sed 's/^/::error::/'
+          fi
+          exit "$status"
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v7

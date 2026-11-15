@@ -212,7 +212,8 @@ class MathWakeUnitTest {
   fun testQrCodeDecoder_decodesRotatedCameraFrame() {
     val payload = QrUnlockPayload.encode(QrUnlockPayload.generateToken(Random(22)))
     val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, QR_TEST_SIZE, QR_TEST_SIZE)
-    val frame = buildCameraFrame(rotateClockwise(matrix, 1))
+    matrix.rotate90()
+    val frame = buildCameraFrame(matrix)
 
     val luminance = extractLuminance(frame.buffer, frame.rowStride, 1, frame.width, frame.height)
       ?: error("padded Y plane extraction failed")
@@ -263,20 +264,4 @@ private fun buildCameraFrame(matrix: BitMatrix): CameraFrame {
     }
   }
   return CameraFrame(buffer, width, height, rowStride)
-}
-
-private fun rotateClockwise(matrix: BitMatrix, quarterTurns: Int): BitMatrix {
-  var current = matrix
-  repeat(quarterTurns) {
-    val rotated = BitMatrix(current.height, current.width)
-    for (y in 0 until current.height) {
-      for (x in 0 until current.width) {
-        if (current[x, y]) {
-          rotated.set(current.height - 1 - y, x, true)
-        }
-      }
-    }
-    current = rotated
-  }
-  return current
 }
