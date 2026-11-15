@@ -4,17 +4,22 @@ import com.example.alarm.AlarmScheduler
 import com.example.data.model.AlarmEntity
 import com.example.math.MathProblemGenerator
 import com.example.util.QrUnlockPayload
+import com.example.util.decodeLuminance
+import com.example.util.extractLuminance
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.BitMatrix
 import com.google.zxing.common.HybridBinarizer
 import com.google.zxing.qrcode.QRCodeWriter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.ByteBuffer
 import kotlin.random.Random
 
 class MathWakeUnitTest {
@@ -183,4 +188,95 @@ class MathWakeUnitTest {
     assertEquals(payload, decoded.text)
     assertTrue(QrUnlockPayload.isValid(decoded.text, token))
   }
+
+  /**
+   * Regression guard for the alarm-time scanner: camera Y planes are padded
+   * (`rowStride > width`), and the decoder used to rotate the luminance source with
+   * `rotateCounterClockwise()`, which ZXing's `PlanarYUVLuminanceSource` does not support.
+   * That threw for every frame on portrait phones, so the QR was never decoded.
+   */
+  @Test
+  fun testQrCodeDecoder_readsPaddedCameraPlane() {
+    val payload = QrUnlockPayload.encode(QrUnlockPayload.generateToken(Random(21)))
+    val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, QR_TEST_SIZE, QR_TEST_SIZE)
+    val frame = buildCameraFrame(matrix)
+
+    val luminance = extractLuminance(frame.buffer, frame.rowStride, 1, frame.width, frame.height)
+      ?: error("padded Y plane extraction failed")
+    assertEquals(frame.width * frame.height, luminance.size)
+    assertEquals(payload, decodeLuminance(luminance, frame.width, frame.height))
+  }
+
+  /** Portrait phones deliver the frame rotated by 90 degrees; it must still decode. */
+  @Test
+  fun testQrCodeDecoder_decodesRotatedCameraFrame() {
+    val payload = QrUnlockPayload.encode(QrUnlockPayload.generateToken(Random(22)))
+    val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, QR_TEST_SIZE, QR_TEST_SIZE)
+    val frame = buildCameraFrame(rotateClockwise(matrix, 1))
+
+    val luminance = extractLuminance(frame.buffer, frame.rowStride, 1, frame.width, frame.height)
+      ?: error("padded Y plane extraction failed")
+    assertEquals(payload, decodeLuminance(luminance, frame.width, frame.height))
+  }
+
+  @Test
+  fun testQrCodeDecoder_blankFrameReturnsNullWithoutThrowing() {
+    val width = 64
+    val height = 48
+    val buffer = ByteBuffer.allocate(width * height)
+
+    val luminance = extractLuminance(buffer, width, 1, width, height)
+      ?: error("Y plane extraction failed")
+    assertNull(decodeLuminance(luminance, width, height))
+  }
+}
+
+private const val QR_TEST_SIZE = 480
+
+private class CameraFrame(
+  val buffer: ByteBuffer,
+  val width: Int,
+  val height: Int,
+  val rowStride: Int,
+)
+
+/** Builds a padded camera Y plane (white page, black modules) the way CameraX delivers it. */
+private fun buildCameraFrame(matrix: BitMatrix): CameraFrame {
+  val padding = 24
+  val width = matrix.width + padding * 2
+  val height = matrix.height + padding * 2
+  val rowStride = width + padding
+  val buffer = ByteBuffer.allocate(rowStride * height)
+
+  for (y in 0 until height) {
+    for (x in 0 until rowStride) {
+      buffer.put(y * rowStride + x, 0xFF.toByte())
+    }
+  }
+
+  val left = (width - matrix.width) / 2
+  val top = (height - matrix.height) / 2
+  for (y in 0 until matrix.height) {
+    for (x in 0 until matrix.width) {
+      val value = if (matrix[x, y]) 0x00.toByte() else 0xFF.toByte()
+      buffer.put((top + y) * rowStride + left + x, value)
+    }
+  }
+  return CameraFrame(buffer, width, height, rowStride)
+}
+
+private fun rotateClockwise(matrix: BitMatrix, quarterTurns: Int): BitMatrix {
+  var current = matrix
+  repeat(quarterTurns) {
+    val rotated = BitMatrix(current.height, current.width)
+    for (y in 0 until current.height) {
+      for (x in 0 until current.width) {
+        if (current[x, y]) {
+          rotated.set(current.height - 1 - y, x, true)
+        }
+      }
+    }
+    current = rotated
+  }
+  return current
 }

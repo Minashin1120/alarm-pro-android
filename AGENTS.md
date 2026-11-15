@@ -63,6 +63,7 @@ MathWake（二度寝防止アラーム）を開発するエージェント向け
 
 - `.github/workflows/android.yml`
   - `main` / `master` / `develop` への push（`app/**` など変更時）で実行
+  - `assembleDebug` に続けて `testDebugUnitTest`（JVM ユニットテスト）を実行
   - `assembleDebug` 後、非 PR 実行では **`ci-run-<run_number>`** の prerelease を作成
   - APK は Release の `app-debug.apk` から取得できる
   - 古い `app-debug` artifact は自動削除される
@@ -300,6 +301,11 @@ adb shell dpm set-device-owner \
 - **QRトークンの未発行**: `EXTRA_QR_REQUIRED` だけ渡してトークンを発行しないと、鳴動中に
   解除不能になる。`ActiveAlarmScreen` はトークンが無い場合QR段階をスキップする保険を持つが、
   AddEdit 側で「トークン未発行ならQRを有効化できない」制約を外さない。
+- **QRスキャンの回転**: ZXing の `PlanarYUVLuminanceSource` は回転非対応で、
+  `rotateCounterClockwise()` は `UnsupportedOperationException` を投げる。カメラの
+  `imageInfo.rotationDegrees` を適用しようとすると縦向き端末では毎フレーム失敗し、
+  QRを映しても永久に検出されない。ZXing のQR検出は回転非依存なので、Y平面をそのまま渡す
+  （`QrCodeDecoder` のコメントと `MathWakeUnitTest` の回転フレームテストを維持する）。
 - **Room の DEFAULT**: `qrRequired` は `@ColumnInfo(defaultValue = "0")` と
   `MIGRATION_1_2` の `DEFAULT 0` を一致させる。片方だけ変えると起動時に
   「Migration didn't properly handle」でクラッシュする。
