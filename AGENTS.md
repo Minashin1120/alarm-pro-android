@@ -80,6 +80,28 @@ MathWake（二度寝防止アラーム）を開発するエージェント向け
 
 **AGENTS.md やドキュメントのみの変更は CI の path filter 対象外**のため、ビルドは走らない。
 
+### SSH push（`scripts/push-with-ssh.sh`）
+
+CI の確認まで含めた push はこのスクリプトを使う。
+
+1. 初回のみ SSH キーを用意する
+   - 既存キーを使う: `./scripts/push-with-ssh.sh --key ~/.ssh/id_ed25519`
+   - 新規作成: `./scripts/push-with-ssh.sh --generate-key`
+     → 表示された**公開鍵**を https://github.com/settings/keys に登録する
+   - 自動検出順: `$MATHWAKE_SSH_KEY` → `~/.ssh/mathwake_ed25519` → `id_ed25519` → `id_rsa`
+2. `./scripts/push-with-ssh.sh` で `origin` を SSH に切り替えて push
+   （ポート22が使えない場合は `ssh.github.com:443` に自動フォールバック）
+3. リモートの SHA 一致を確認し、そのコミットの Actions 完了と `ci-run-<N>` を待つ
+4. CI を待たない: `--no-verify` ／ push せず確認だけ: `--verify-only`
+
+- 認証に使ったキーは**リポジトリローカルの `core.sshCommand`** に保存されるため、
+  以降は `git push origin main` でも動く（`.git/config` のみ。コミットはされない）。
+- `scripts/**` や `*.md` だけの変更は workflow の path filter 外なので CI は走らない。
+  スクリプトはこの場合 CI 確認をスキップする（`--verify-only` は常に確認する）。
+- API レート制限（HTTP 403/429）が出たら
+  `GITHUB_TOKEN=... ./scripts/push-with-ssh.sh` を付ける。
+- 秘密鍵の中身は表示もコミットもしない。公開鍵（`.pub`）だけを共有する。
+
 ## 4. ディレクトリ構成
 
 ```
@@ -307,6 +329,8 @@ adb shell dpm set-device-owner \
   - `ci: ...`
   - `docs: ...`
 - push すると `app/**` の変更に応じて Android CI が走り、成功時に `ci-run-<N>` prerelease が作られる。
+- CI 確認込みの push は `./scripts/push-with-ssh.sh`（詳細は 3 章）。
+  `core.sshCommand` 設定済みなら `git push origin main` でもよい。
 - 正式リリースは `vX.Y.Z` タグ（例: `v1.0.0`）で Release Build ワークフローを起動する。
 - ビルド成果物（`app/build/`、`*.apk`）や `.gradle/` はコミットしない。
 
