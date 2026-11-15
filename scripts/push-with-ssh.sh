@@ -386,6 +386,12 @@ for arg in "${SSH_ARGS[@]}"; do
 done
 export GIT_SSH_COMMAND="$ssh_command"
 
+# Persist the key for this repository only, so plain `git push` / `git fetch` also work.
+if [ "$(git config --local --get core.sshCommand 2>/dev/null || true)" != "$ssh_command" ]; then
+  git config --local core.sshCommand "$ssh_command"
+  echo "Saved repo-local core.sshCommand (SSH key for this repository)."
+fi
+
 # ---------------------------------------------------------------------------
 # Remote + push
 # ---------------------------------------------------------------------------
