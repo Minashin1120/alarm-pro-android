@@ -73,8 +73,9 @@ MathWake（二度寝防止アラーム）を開発するエージェント向け
 
 1. 変更内容を確認し、`git diff --check` で空白エラーを確認
 2. コミット（例: `fix: ...` / `feat: ...` / `ci: ...`）
-3. `git push origin main`
-4. GitHub Actions の完了を確認し、失敗時はログを読んで修正
+3. `./scripts/push-with-ssh.sh` で SSH push（`git push origin main` でも可）
+   - SSHキーの選択／生成、push、GitHub Actions の完了、`ci-run-<N>` の確認まで自動化する
+4. Actions が失敗した場合はログを読んで修正
 5. 成功したら Release `ci-run-<N>` の URL をユーザーに伝える
 
 **AGENTS.md やドキュメントのみの変更は CI の path filter 対象外**のため、ビルドは走らない。
@@ -325,5 +326,6 @@ adb shell dpm set-device-owner \
 | データモデル | `app/src/main/java/com/example/data/model/AlarmEntity.kt` |
 | 問題生成 | `app/src/main/java/com/example/math/MathProblemGenerator.kt` |
 | Device Owner 設定 | `scripts/setup-device-owner.sh` |
+| SSH push と CI 確認 | `scripts/push-with-ssh.sh` |
 | CI | `.github/workflows/android.yml` |
 | 署名付きリリース | `.github/workflows/release.yml` |
