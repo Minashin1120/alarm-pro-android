@@ -28,6 +28,7 @@ KEY_PATH="${MATHWAKE_SSH_KEY:-}"
 GENERATE_KEY=0
 VERIFY_ONLY=0
 VERIFY=1
+EXPECT_CI=1
 TIMEOUT_SECONDS=1800
 
 usage() {
@@ -137,7 +138,7 @@ require_api_ok() {
   esac
 }
 
-# Prints: id status conclusion run_number html_url
+# Prints: id<TAB>status<TAB>conclusion<TAB>run_number<TAB>html_url
 first_run_fields() {
   python3 -c '
 import json, sys
@@ -149,12 +150,12 @@ runs = data.get("workflow_runs") or []
 if not runs:
     sys.exit(0)
 run = runs[0]
-print(run.get("id", ""), run.get("status", ""), run.get("conclusion") or "",
-      run.get("run_number", ""), run.get("html_url", ""))
+print("\t".join(str(run.get(key, "") or "") for key in
+                ("id", "status", "conclusion", "run_number", "html_url")))
 '
 }
 
-# Prints: status conclusion run_number html_url
+# Prints: status<TAB>conclusion<TAB>run_number<TAB>html_url
 run_fields() {
   python3 -c '
 import json, sys
@@ -162,8 +163,8 @@ try:
     run = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
-print(run.get("status", ""), run.get("conclusion") or "",
-      run.get("run_number", ""), run.get("html_url", ""))
+print("\t".join(str(run.get(key, "") or "") for key in
+                ("status", "conclusion", "run_number", "html_url")))
 '
 }
 
@@ -188,15 +189,16 @@ print(url, apk)
 verify_ci() {
   local sha="$1"
   local deadline=$((SECONDS + TIMEOUT_SECONDS))
+  local appear_deadline=$((SECONDS + 120))
   local run_id="" run_status="" run_conclusion="" run_number="" run_url=""
 
   echo
   echo "Waiting for GitHub Actions to pick up ${sha:0:7} ..."
-  while [ "$SECONDS" -lt "$deadline" ]; do
+  while [ "$SECONDS" -lt "$appear_deadline" ]; do
     api_get "https://api.github.com/repos/${SLUG}/actions/runs?head_sha=${sha}&per_page=10"
     require_api_ok "while listing workflow runs"
 
-    read -r run_id run_status run_conclusion run_number run_url \
+    IFS=$'\t' read -r run_id run_status run_conclusion run_number run_url \
       < <(printf '%s' "$API_BODY" | first_run_fields) || true
     if [ -n "$run_id" ]; then
       break
@@ -205,7 +207,12 @@ verify_ci() {
   done
 
   if [ -z "$run_id" ]; then
-    echo "ERROR: no workflow run appeared within ${TIMEOUT_SECONDS}s." >&2
+    if [ "$EXPECT_CI" -eq 0 ]; then
+      echo "No CI run expected: the pushed commits do not touch app/** or the build files."
+      echo "Skipping CI verification."
+      return 0
+    fi
+    echo "ERROR: no workflow run appeared within 120s." >&2
     echo "       The push may not have touched app/** or CI is delayed." >&2
     exit 1
   fi
@@ -217,7 +224,7 @@ verify_ci() {
     api_get "https://api.github.com/repos/${SLUG}/actions/runs/${run_id}"
     require_api_ok "while polling run ${run_id}"
 
-    read -r run_status run_conclusion run_number run_url \
+    IFS=$'\t' read -r run_status run_conclusion run_number run_url \
       < <(printf '%s' "$API_BODY" | run_fields) || true
 
     if [ "$run_status" != "$last_status" ]; then
@@ -395,6 +402,18 @@ fi
 
 if [ -n "$(git status --porcelain)" ]; then
   echo "WARNING: uncommitted changes are not part of the push. Commit them if intended." >&2
+fi
+
+# Android CI only runs for build-related paths (see .github/workflows/android.yml).
+CHANGED_FILES=""
+if base_sha="$(git rev-parse --verify --quiet "origin/${BRANCH}" 2>/dev/null)"; then
+  CHANGED_FILES="$(git diff --name-only "${base_sha}..HEAD" 2>/dev/null || true)"
+fi
+if [ -n "$CHANGED_FILES" ] && ! printf '%s\n' "$CHANGED_FILES" | grep -Eq \
+  '^(app/|build\.gradle\.kts|settings\.gradle\.kts|gradle/|gradlew|gradle\.properties|ci/debug\.keystore|\.github/workflows/android\.yml)'; then
+  EXPECT_CI=0
+  echo "Note: these commits only touch non-build files, so Android CI will not run:"
+  printf '%s\n' "$CHANGED_FILES" | sed 's/^/  /'
 fi
 
 if [ "$(git branch --show-current)" != "$BRANCH" ]; then
