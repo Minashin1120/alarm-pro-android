@@ -78,6 +78,7 @@ class AlarmService : Service() {
   private var cachedRequiredCount: Int = 3
   private var cachedUseDeviceVolume: Boolean = false
   private var cachedVolumePercent: Int = 85
+  private var cachedQrRequired: Boolean = false
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -106,6 +107,7 @@ class AlarmService : Service() {
     cachedRequiredCount = intent?.getIntExtra(AlarmScheduler.EXTRA_REQUIRED_COUNT, 3) ?: 3
     cachedUseDeviceVolume = intent?.getBooleanExtra(AlarmScheduler.EXTRA_USE_DEVICE_VOLUME, false) ?: false
     cachedVolumePercent = intent?.getIntExtra(AlarmScheduler.EXTRA_VOLUME_PERCENT, 85) ?: 85
+    cachedQrRequired = intent?.getBooleanExtra(AlarmScheduler.EXTRA_QR_REQUIRED, false) ?: false
     val shouldVibrate = intent?.getBooleanExtra(AlarmScheduler.EXTRA_VIBRATE, true) ?: true
 
     currentAlarmId = alarmId
@@ -118,7 +120,8 @@ class AlarmService : Service() {
       cachedDifficulty,
       cachedRequiredCount,
       cachedUseDeviceVolume,
-      cachedVolumePercent
+      cachedVolumePercent,
+      cachedQrRequired
     )
     startForeground(NOTIFICATION_ID, notification)
 
@@ -173,6 +176,7 @@ class AlarmService : Service() {
         putExtra(AlarmScheduler.EXTRA_REQUIRED_COUNT, cachedRequiredCount)
         putExtra(AlarmScheduler.EXTRA_USE_DEVICE_VOLUME, cachedUseDeviceVolume)
         putExtra(AlarmScheduler.EXTRA_VOLUME_PERCENT, cachedVolumePercent)
+        putExtra(AlarmScheduler.EXTRA_QR_REQUIRED, cachedQrRequired)
       }
       startActivity(intent)
     } catch (e: Exception) {
@@ -186,7 +190,8 @@ class AlarmService : Service() {
     difficulty: String,
     requiredCount: Int,
     useDeviceVolume: Boolean,
-    volumePercent: Int
+    volumePercent: Int,
+    qrRequired: Boolean
   ): Notification {
     val fullScreenIntent = Intent(this, ActiveAlarmActivity::class.java).apply {
       flags = Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -198,6 +203,7 @@ class AlarmService : Service() {
       putExtra(AlarmScheduler.EXTRA_REQUIRED_COUNT, requiredCount)
       putExtra(AlarmScheduler.EXTRA_USE_DEVICE_VOLUME, useDeviceVolume)
       putExtra(AlarmScheduler.EXTRA_VOLUME_PERCENT, volumePercent)
+      putExtra(AlarmScheduler.EXTRA_QR_REQUIRED, qrRequired)
     }
 
     val pendingIntent = PendingIntent.getActivity(
@@ -210,7 +216,13 @@ class AlarmService : Service() {
     return NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(R.mipmap.ic_launcher)
       .setContentTitle("【MathWake】アラーム鳴動中！")
-      .setContentText("計算問題を解いてアラームを停止してください")
+      .setContentText(
+        if (qrRequired) {
+          "計算問題を解き、印刷したQRコードをスキャンして停止してください"
+        } else {
+          "計算問題を解いてアラームを停止してください"
+        }
+      )
       .setPriority(NotificationCompat.PRIORITY_MAX)
       .setCategory(NotificationCompat.CATEGORY_ALARM)
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)

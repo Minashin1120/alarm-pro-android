@@ -7,7 +7,7 @@ MathWake（二度寝防止アラーム）を開発するエージェント向け
 
 - **アプリ名**: MathWake
 - **目的**: 数学問題に指定回数正解するまで停止できないアラーム。二度寝・無意識の停止・脱出を防ぐ。
-- **技術スタック**: Kotlin / Jetpack Compose (Material 3) / Room / AlarmManager / Foreground Service / Device Admin / Accessibility Service
+- **技術スタック**: Kotlin / Jetpack Compose (Material 3) / Room / AlarmManager / Foreground Service / Device Admin / Accessibility Service / CameraX / ZXing (QR)
 - **UI 言語**: 日本語（`strings.xml` および Compose 内の表示文字列）
 - **コードコメント**: 英語を基本とする
 - **リポジトリ**: `Minashin1120/alarm-pro-android`（`main` ブランチ）
@@ -25,7 +25,8 @@ MathWake（二度寝防止アラーム）を開発するエージェント向け
 | Kotlin | 2.2.10 |
 | AGP | 9.1.1 |
 | Compose BOM | 2024.09.00 |
-| Room | 2.7.0（DB version 1） |
+| Room | 2.7.0（DB version 2） |
+| CameraX / ZXing | 1.5.0 / 3.5.3（QRコード解除） |
 
 > `namespace` は `com.example`、実際のパッケージ名は `com.aistudio.mathwake.qvxn` です。
 > ソースの import は `com.example.*`、`R` は `com.example.R` を使います。
@@ -93,16 +94,21 @@ app/src/main/java/com/example/
 │   ├── PowerMenuBlockerAccessibilityService.kt # 通知シェード/電源メニュー遮断
 │   └── MathWakeDeviceAdminReceiver.kt          # Device Admin / Device Owner Receiver
 ├── data/
-│   ├── AppDatabase.kt               # Room DB（version 1）
+│   ├── AppDatabase.kt               # Room DB（version 2, MIGRATION_1_2 あり）
 │   ├── dao/AlarmDao.kt
 │   ├── model/AlarmEntity.kt         # 曜日ビットマスク、難易度、音量設定
 │   └── repository/AlarmRepository.kt
 ├── math/MathProblemGenerator.kt     # 難易度別の問題生成（純粋ロジック）
 ├── ui/
-│   ├── screens/                     # AlarmList / AddEdit / Practice / LockdownSetup
+│   ├── components/QrScannerView.kt  # CameraX + ZXing のインアプリQRスキャナ
+│   ├── screens/                     # AlarmList / AddEdit / Practice / LockdownSetup / QrCodeSetup
 │   ├── theme/                       # 色・タイポグラフィ
 │   └── viewmodel/AlarmViewModel.kt  # CRUD、アラーム登録、テスト鳴動
-└── util/PermissionManager.kt        # 権限状態の集約と設定画面遷移
+└── util/
+    ├── PermissionManager.kt         # 権限状態の集約と設定画面遷移
+    ├── QrUnlockPayload.kt           # QRペイロードの生成・検証（純粋ロジック）
+    ├── QrUnlockManager.kt           # 端末内トークンの保存
+    └── QrCode*.kt                   # QR生成・デコード・印刷/共有
 
 app/src/test/java/com/example/       # JUnit4 + Robolectric
 app/src/main/res/xml/                # accessibility / device_admin / backup 設定
@@ -118,6 +124,7 @@ AlarmScheduler.scheduleAlarm()
             ├─ AlarmService.startForeground()   … 音・バイブ・通知・音量固定
             └─ ActiveAlarmActivity              … ロック画面上に全画面表示
                  └─ 数学問題に requiredCorrectCount 回正解
+                      ├─ （qrRequired の場合）印刷したQRコードをカメラでスキャン
                       └─ dismissAlarmAndExit()   … Service 停止、lock task 終了、finishAndRemoveTask()
 ```
 
@@ -125,6 +132,7 @@ AlarmScheduler.scheduleAlarm()
 - 単発アラーム（`daysOfWeek == 0`）は発火後に `isEnabled = false` へ更新する。
 - `BootReceiver` が再起動後に有効アラームを再登録する。
 - `AlarmEntity.daysOfWeek` は **月曜=bit0 … 日曜=bit6** のビットマスク（127 = 毎日）。
+- `AlarmEntity.qrRequired` が true のアラームは、数学に加えて**印刷QRのスキャン**が必要。
 - `AlarmService.isAlarmActive` は脱出防止サービスが参照するため、鳴動状態と必ず一致させる。
 
 ## 6. 脱出防止（Lockdown）設計 — 最重要
@@ -153,6 +161,29 @@ AlarmScheduler.scheduleAlarm()
      安易に戻さない。
    - **任意機能として扱う**。`allCriticalGranted` に含めない。有効なままだと決済アプリの警告対象に
      なり得るので、セットアップ UI からオフにできる導線を維持し、Device Owner 設定時は不要と案内する。
+
+### 印刷QRコード解除（物理的な起床証明）
+
+数学だけでは起きられない人向けの、2段階目の解除条件。
+
+- アプリが端末ごとに1つのQRコードを発行し、ユーザーが印刷してベッドから離れた場所
+  （洗面所など）に貼る。鳴動中はそのQRをスキャンしないと解除できない。
+- トークンは `QrUnlockManager` が SharedPreferences（`mathwake_qr_unlock`）に保存する。
+  DB には保存しない。ペイロードは `MATHWAKE1:<32文字>`、判定は `QrUnlockPayload.isValid()` のみ。
+- `AlarmEntity.qrRequired` はアラーム単位のフラグ。数学 → QR の順で、両方完了して初めて解除。
+- QRの再発行は印刷済みの紙をすべて無効にするため、`QrCodeSetupScreen` で確認ダイアログを出す。
+  ペイロード形式（`PREFIX` / `TOKEN_LENGTH` / `ALPHABET`）を変えるのも同じ影響がある。
+- **QRが一度も発行されていない端末ではQR段階をスキップする**（`ActiveAlarmScreen` の
+  `isQrStageRequired`）。印刷された紙が存在し得ないのに解除不能で詰むのを防ぐための保険。
+- QRの有効化は「カメラ権限あり」かつ「トークン発行済み」が条件。カメラ権限を後から
+  取り消されるとQR解除アラームを止められなくなるため、AddEdit と QR 画面の両方で警告する。
+- スキャンは `QrScannerView`（CameraX + ZXing）でアプリ内に閉じて行う。外部アプリを
+  起動しないので Device Owner のロックタスク中でも動く。フロント/バックカメラを切り替えられる。
+- 印刷は `QrPrintDocumentAdapter`（`PrintManager` のPDF）、共有は `FileProvider`
+  （`res/xml/file_paths.xml`）で PNG を渡す。
+- **QR画像のスクリーンショット**: QRセットアップ画面は `FLAG_SECURE` でスクリーンショット／
+  画面録画を禁止している。ただし別端末での撮影までは防げないため、「スクショ保存は完全に
+  防げる」とUIや文書に書かない。
 
 ### 権限状態
 
@@ -218,6 +249,7 @@ adb shell dpm set-device-owner \
 - [ ] `namespace` / `applicationId` / 署名を変えていない
 - [ ] 新しい Activity / Service / Receiver / 権限を `AndroidManifest.xml` に登録した
 - [ ] 新しい権限を `PermissionManager` とセットアップ UI に反映した
+- [ ] QR解除を触ったら、カメラ権限・トークン未発行時のフォールバックを壊していない
 - [ ] `AlarmEntity` のフィールド追加時に既存 DB からの移行を考慮した
 - [ ] `AlarmService.isAlarmActive` と画面のライフサイクルが矛盾していない
 - [ ] 脱出防止の Device Owner 経路と Accessibility 経路の両方を壊していない
@@ -242,6 +274,14 @@ adb shell dpm set-device-owner \
 - **メーカー差**: Xiaomi / Samsung などは電源メニューのパッケージ名・クラス名が異なる。
   検知条件を追加するときは `isSystemUiPackage()` / `isPowerClass()` / `isShadeClass()` を拡張する。
 - **`EXPAND_STATUS_BAR` は補助**: 主たる遮断は overlay と Accessibility 側。
+- **QRトークンの未発行**: `EXTRA_QR_REQUIRED` だけ渡してトークンを発行しないと、鳴動中に
+  解除不能になる。`ActiveAlarmScreen` はトークンが無い場合QR段階をスキップする保険を持つが、
+  AddEdit 側で「トークン未発行ならQRを有効化できない」制約を外さない。
+- **Room の DEFAULT**: `qrRequired` は `@ColumnInfo(defaultValue = "0")` と
+  `MIGRATION_1_2` の `DEFAULT 0` を一致させる。片方だけ変えると起動時に
+  「Migration didn't properly handle」でクラッシュする。
+- **印刷QRの再発行**: ペイロードを変えると印刷済みの紙が全部無効になる。既存ユーザーの
+  アラームが止められなくなるため、互換性を壊す変更をしない。
 - **`.aistudio/` は生成物**: 実装計画などのメタデータ。原則編集しない。
 
 ## 10. テスト
@@ -251,6 +291,7 @@ adb shell dpm set-device-owner \
   - 難易度エスカレーション
   - `AlarmEntity` の時刻・曜日サマリー・難易度ラベル
   - `AlarmScheduler.calculateNextTriggerTime()`
+  - QR解除ペイロードの生成・検証（`QrUnlockPayload`）と、ZXingでの生成→デコード往復
 - Robolectric と Compose UI test の依存は導入済み。UI テストを追加する場合は
   `app/src/androidTest` と既存の testTag を活用する。
 - 端末依存の挙動（Device Owner / 電源メニュー / 通知シェード）は自動テストではなく、

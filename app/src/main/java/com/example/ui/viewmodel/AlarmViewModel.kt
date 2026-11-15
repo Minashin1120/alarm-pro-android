@@ -103,6 +103,7 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
       putExtra(AlarmScheduler.EXTRA_USE_DEVICE_VOLUME, alarm.useDeviceVolume)
       putExtra(AlarmScheduler.EXTRA_VOLUME_PERCENT, alarm.volumePercent)
       putExtra(AlarmScheduler.EXTRA_VIBRATE, alarm.vibrate)
+      putExtra(AlarmScheduler.EXTRA_QR_REQUIRED, alarm.qrRequired)
     }
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -121,6 +122,7 @@ class AlarmViewModel(application: Application) : AndroidViewModel(application) {
       putExtra(AlarmScheduler.EXTRA_REQUIRED_COUNT, alarm.requiredCorrectCount)
       putExtra(AlarmScheduler.EXTRA_USE_DEVICE_VOLUME, alarm.useDeviceVolume)
       putExtra(AlarmScheduler.EXTRA_VOLUME_PERCENT, alarm.volumePercent)
+      putExtra(AlarmScheduler.EXTRA_QR_REQUIRED, alarm.qrRequired)
     }
     context.startActivity(activityIntent)
   }

@@ -1,5 +1,6 @@
 package com.example.data.model
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -16,7 +17,10 @@ data class AlarmEntity(
   val requiredCorrectCount: Int = 3, // 1, 3, 5
   val useDeviceVolume: Boolean = false, // false = 独自音量指定, true = 端末音量を遵守
   val volumePercent: Int = 85, // 0..100
-  val vibrate: Boolean = true
+  val vibrate: Boolean = true,
+  // Physical "wake-up QR": the printed sheet must be scanned in addition to the math streak.
+  @ColumnInfo(defaultValue = "0")
+  val qrRequired: Boolean = false
 ) {
   val formattedTime: String
     get() = "%02d:%02d".format(hour, minute)

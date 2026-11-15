@@ -18,6 +18,7 @@ object AlarmScheduler {
   const val EXTRA_USE_DEVICE_VOLUME = "extra_use_device_volume"
   const val EXTRA_VOLUME_PERCENT = "extra_volume_percent"
   const val EXTRA_VIBRATE = "extra_vibrate"
+  const val EXTRA_QR_REQUIRED = "extra_qr_required"
 
   fun scheduleAlarm(context: Context, alarm: AlarmEntity) {
     if (!alarm.isEnabled) return
@@ -33,6 +34,7 @@ object AlarmScheduler {
       putExtra(EXTRA_USE_DEVICE_VOLUME, alarm.useDeviceVolume)
       putExtra(EXTRA_VOLUME_PERCENT, alarm.volumePercent)
       putExtra(EXTRA_VIBRATE, alarm.vibrate)
+      putExtra(EXTRA_QR_REQUIRED, alarm.qrRequired)
     }
 
     val pendingIntent = PendingIntent.getBroadcast(
@@ -141,6 +143,7 @@ object AlarmScheduler {
       putExtra(EXTRA_USE_DEVICE_VOLUME, alarm.useDeviceVolume)
       putExtra(EXTRA_VOLUME_PERCENT, alarm.volumePercent)
       putExtra(EXTRA_VIBRATE, alarm.vibrate)
+      putExtra(EXTRA_QR_REQUIRED, alarm.qrRequired)
     }
 
     val pendingIntent = PendingIntent.getBroadcast(

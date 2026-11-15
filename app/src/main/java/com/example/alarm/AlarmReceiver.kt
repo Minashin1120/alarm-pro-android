@@ -28,6 +28,7 @@ class AlarmReceiver : BroadcastReceiver() {
     val useDeviceVolume = intent.getBooleanExtra(AlarmScheduler.EXTRA_USE_DEVICE_VOLUME, false)
     val volumePercent = intent.getIntExtra(AlarmScheduler.EXTRA_VOLUME_PERCENT, 85)
     val vibrate = intent.getBooleanExtra(AlarmScheduler.EXTRA_VIBRATE, true)
+    val qrRequired = intent.getBooleanExtra(AlarmScheduler.EXTRA_QR_REQUIRED, false)
 
     // 1. Start AlarmService (Foreground Service)
     val serviceIntent = Intent(context, AlarmService::class.java).apply {
@@ -39,6 +40,7 @@ class AlarmReceiver : BroadcastReceiver() {
       putExtra(AlarmScheduler.EXTRA_USE_DEVICE_VOLUME, useDeviceVolume)
       putExtra(AlarmScheduler.EXTRA_VOLUME_PERCENT, volumePercent)
       putExtra(AlarmScheduler.EXTRA_VIBRATE, vibrate)
+      putExtra(AlarmScheduler.EXTRA_QR_REQUIRED, qrRequired)
     }
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -58,6 +60,7 @@ class AlarmReceiver : BroadcastReceiver() {
       putExtra(AlarmScheduler.EXTRA_REQUIRED_COUNT, requiredCount)
       putExtra(AlarmScheduler.EXTRA_USE_DEVICE_VOLUME, useDeviceVolume)
       putExtra(AlarmScheduler.EXTRA_VOLUME_PERCENT, volumePercent)
+      putExtra(AlarmScheduler.EXTRA_QR_REQUIRED, qrRequired)
     }
     context.startActivity(activityIntent)
 

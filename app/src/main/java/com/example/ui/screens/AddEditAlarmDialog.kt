@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,6 +29,7 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeOff
@@ -58,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -79,6 +85,8 @@ import com.example.ui.theme.Slate700
 import com.example.ui.theme.Slate800
 import com.example.ui.theme.Slate900
 import com.example.ui.theme.Slate950
+import com.example.util.CameraPermission
+import com.example.util.QrUnlockManager
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -96,6 +104,21 @@ fun AddEditAlarmDialog(
   var useDeviceVolume by remember { mutableStateOf(initialAlarm?.useDeviceVolume ?: false) }
   var volumePercent by remember { mutableFloatStateOf(initialAlarm?.volumePercent?.toFloat() ?: 85f) }
   var vibrate by remember { mutableStateOf(initialAlarm?.vibrate ?: true) }
+  var qrRequired by remember { mutableStateOf(initialAlarm?.qrRequired ?: false) }
+
+  val context = LocalContext.current
+  val cameraPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { granted ->
+    qrRequired = granted
+    if (!granted) {
+      Toast.makeText(
+        context,
+        "カメラが許可されないとQRコード解除を使えません",
+        Toast.LENGTH_LONG
+      ).show()
+    }
+  }
 
   Dialog(
     onDismissRequest = onDismiss,
@@ -418,7 +441,100 @@ fun AddEditAlarmDialog(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // 5. Volume Configuration Card (with Device Volume Respect toggle)
+        // 5. Printed QR unlock (physical wake-up proof)
+        Card(
+          modifier = Modifier.fillMaxWidth(),
+          colors = CardDefaults.cardColors(containerColor = Slate950),
+          shape = RoundedCornerShape(16.dp),
+          border = androidx.compose.foundation.BorderStroke(1.dp, Slate800)
+        ) {
+          Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+              ) {
+                Icon(
+                  imageVector = Icons.Default.QrCode2,
+                  contentDescription = null,
+                  tint = SkyInfo,
+                  modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column {
+                  Text(
+                    text = "印刷QRコードで解除",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Slate100
+                  )
+                  Text(
+                    text = if (qrRequired) "数学＋QRスキャンの両方が必要" else "数学の問題だけで解除",
+                    fontSize = 11.sp,
+                    color = Slate400
+                  )
+                }
+              }
+              Switch(
+                checked = qrRequired,
+                onCheckedChange = { wanted ->
+                  if (!wanted) {
+                    qrRequired = false
+                  } else if (!CameraPermission.hasCamera(context)) {
+                    Toast.makeText(
+                      context,
+                      "この端末にはカメラがないためQRコード解除を使えません",
+                      Toast.LENGTH_LONG
+                    ).show()
+                  } else if (QrUnlockManager.getToken(context) == null) {
+                    qrRequired = false
+                    Toast.makeText(
+                      context,
+                      "先にアラーム一覧右上のQRボタンから、QRコードを発行・印刷してください",
+                      Toast.LENGTH_LONG
+                    ).show()
+                  } else if (CameraPermission.isGranted(context)) {
+                    qrRequired = true
+                  } else {
+                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                  }
+                },
+                modifier = Modifier.testTag("qr_required_switch"),
+                colors = SwitchDefaults.colors(
+                  checkedThumbColor = SkyInfo,
+                  checkedTrackColor = Slate800
+                )
+              )
+            }
+
+            if (qrRequired) {
+              Spacer(modifier = Modifier.height(8.dp))
+              Text(
+                text = "解除時に、印刷したQRコードをカメラでスキャンする必要があります。QRはベッドから離れた場所（洗面所など）に貼ってください。未印刷のまま有効にするとアラームを止められなくなります。",
+                fontSize = 11.sp,
+                color = Slate400,
+                lineHeight = 15.sp
+              )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+              text = "QRコードの発行・印刷は、アラーム一覧右上のQRボタンから行えます。",
+              fontSize = 10.sp,
+              color = Slate400,
+              lineHeight = 14.sp
+            )
+          }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 6. Volume Configuration Card (with Device Volume Respect toggle)
         Card(
           modifier = Modifier.fillMaxWidth(),
           colors = CardDefaults.cardColors(containerColor = Slate950),
@@ -525,7 +641,7 @@ fun AddEditAlarmDialog(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // 6. Vibration Switch
+        // 7. Vibration Switch
         Card(
           modifier = Modifier.fillMaxWidth(),
           colors = CardDefaults.cardColors(containerColor = Slate950),
@@ -598,7 +714,8 @@ fun AddEditAlarmDialog(
                 requiredCorrectCount = requiredCount,
                 useDeviceVolume = useDeviceVolume,
                 volumePercent = volumePercent.toInt(),
-                vibrate = vibrate
+                vibrate = vibrate,
+                qrRequired = qrRequired
               )
               onSave(alarm)
             },

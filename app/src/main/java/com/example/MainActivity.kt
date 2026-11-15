@@ -1,9 +1,11 @@
 package com.example
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,6 +33,7 @@ import com.example.ui.screens.AddEditAlarmDialog
 import com.example.ui.screens.AlarmListScreen
 import com.example.ui.screens.LockdownSetupDialog
 import com.example.ui.screens.MathPracticeScreen
+import com.example.ui.screens.QrCodeSetupScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.AlarmViewModel
 import com.example.util.PermissionManager
@@ -51,7 +54,8 @@ class MainActivity : ComponentActivity() {
 
 enum class CurrentScreen {
   ALARM_LIST,
-  MATH_PRACTICE
+  MATH_PRACTICE,
+  QR_SETUP
 }
 
 @Composable
@@ -66,6 +70,20 @@ fun MathWakeApp(viewModel: AlarmViewModel = viewModel()) {
   var isLockdownSetupDialogOpen by remember { mutableStateOf(false) }
 
   var permissionStatus by remember { mutableStateOf(PermissionManager.checkStatus(context)) }
+
+  // Block screenshots / screen recording while the wake-up QR is on screen, otherwise the
+  // user could keep a screenshot in the bed and bypass the physical unlock.
+  val hostActivity = context as? Activity
+  DisposableEffect(currentScreen, hostActivity) {
+    if (currentScreen == CurrentScreen.QR_SETUP) {
+      hostActivity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    } else {
+      hostActivity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
+    onDispose {
+      hostActivity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
+  }
 
   // Refresh permission status whenever returning from system settings
   DisposableEffect(lifecycleOwner) {
@@ -120,7 +138,7 @@ fun MathWakeApp(viewModel: AlarmViewModel = viewModel()) {
   }
 
   // Handle back button for sub-screen
-  if (currentScreen == CurrentScreen.MATH_PRACTICE) {
+  if (currentScreen == CurrentScreen.MATH_PRACTICE || currentScreen == CurrentScreen.QR_SETUP) {
     BackHandler {
       currentScreen = CurrentScreen.ALARM_LIST
     }
@@ -132,6 +150,11 @@ fun MathWakeApp(viewModel: AlarmViewModel = viewModel()) {
         alarms = alarms,
         permissionStatus = permissionStatus,
         onOpenLockdownSetup = { isLockdownSetupDialogOpen = true },
+        onOpenQrSetup = {
+          isAddEditDialogOpen = false
+          editingAlarm = null
+          currentScreen = CurrentScreen.QR_SETUP
+        },
         onAddAlarmClick = {
           editingAlarm = null
           isAddEditDialogOpen = true
@@ -160,6 +183,12 @@ fun MathWakeApp(viewModel: AlarmViewModel = viewModel()) {
 
     CurrentScreen.MATH_PRACTICE -> {
       MathPracticeScreen(
+        onBack = { currentScreen = CurrentScreen.ALARM_LIST }
+      )
+    }
+
+    CurrentScreen.QR_SETUP -> {
+      QrCodeSetupScreen(
         onBack = { currentScreen = CurrentScreen.ALARM_LIST }
       )
     }

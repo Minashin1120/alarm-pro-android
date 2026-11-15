@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Temporary QR PNG that is shared (printed / saved) from the setup screen. -->
+    <cache-path
+        name="qr"
+        path="qr/" />
+</paths>

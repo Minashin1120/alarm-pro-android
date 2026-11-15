@@ -3,10 +3,19 @@ package com.example
 import com.example.alarm.AlarmScheduler
 import com.example.data.model.AlarmEntity
 import com.example.math.MathProblemGenerator
+import com.example.util.QrUnlockPayload
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.MultiFormatReader
+import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.HybridBinarizer
+import com.google.zxing.qrcode.QRCodeWriter
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.random.Random
 
 class MathWakeUnitTest {
 
@@ -112,5 +121,66 @@ class MathWakeUnitTest {
     )
     val nextTrigger = AlarmScheduler.calculateNextTriggerTime(alarm)
     assertTrue(nextTrigger > System.currentTimeMillis())
+  }
+
+  @Test
+  fun testAlarmEntity_qrRequiredDefaultsOff() {
+    val alarm = AlarmEntity(hour = 6, minute = 45)
+    assertFalse(alarm.qrRequired)
+
+    val withQr = alarm.copy(qrRequired = true)
+    assertTrue(withQr.qrRequired)
+  }
+
+  @Test
+  fun testQrUnlockPayload_generatesWellFormedToken() {
+    val token = QrUnlockPayload.generateToken(Random(1234))
+    assertEquals(QrUnlockPayload.TOKEN_LENGTH, token.length)
+    assertTrue(QrUnlockPayload.isTokenWellFormed(token))
+    assertTrue(token.all { it in QrUnlockPayload.ALPHABET })
+
+    val anotherToken = QrUnlockPayload.generateToken(Random(5678))
+    assertFalse(token == anotherToken)
+  }
+
+  @Test
+  fun testQrUnlockPayload_onlyAcceptsIssuedPayload() {
+    val token = QrUnlockPayload.generateToken(Random(42))
+    val payload = QrUnlockPayload.encode(token)
+
+    assertTrue(QrUnlockPayload.isValid(payload, token))
+    assertTrue(QrUnlockPayload.isValid("  $payload\n", token))
+
+    assertFalse(QrUnlockPayload.isValid("MATHWAKE1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", token))
+    assertFalse(QrUnlockPayload.isValid(payload, QrUnlockPayload.generateToken(Random(43))))
+    assertFalse(QrUnlockPayload.isValid(null, token))
+    assertFalse(QrUnlockPayload.isValid(payload, null))
+    assertFalse(QrUnlockPayload.isValid("", token))
+    assertFalse(QrUnlockPayload.isValid(payload, "short"))
+  }
+
+  /**
+   * Round-trip guard: the payload size must stay small enough for a printed QR code,
+   * and the generated image must decode back to exactly the issued payload.
+   */
+  @Test
+  fun testQrCodePayload_roundTripsThroughZxing() {
+    val token = QrUnlockPayload.generateToken(Random(7))
+    val payload = QrUnlockPayload.encode(token)
+    val size = 480
+
+    val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size)
+    val pixels = IntArray(size * size)
+    for (y in 0 until size) {
+      for (x in 0 until size) {
+        pixels[y * size + x] = if (matrix[x, y]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
+      }
+    }
+
+    val decoded = MultiFormatReader().decode(
+      BinaryBitmap(HybridBinarizer(RGBLuminanceSource(size, size, pixels)))
+    )
+    assertEquals(payload, decoded.text)
+    assertTrue(QrUnlockPayload.isValid(decoded.text, token))
   }
 }

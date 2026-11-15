@@ -1,8 +1,10 @@
 package com.example
 
+import android.Manifest
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
@@ -16,8 +18,11 @@ import android.view.View
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
@@ -53,8 +58,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -92,6 +99,7 @@ import com.example.alarm.AlarmService
 import com.example.alarm.LockTaskController
 import com.example.math.MathProblem
 import com.example.math.MathProblemGenerator
+import com.example.ui.components.QrScannerView
 import com.example.ui.theme.AmberPrimary
 import com.example.ui.theme.CrimsonAlarm
 import com.example.ui.theme.EmeraldDark
@@ -106,6 +114,8 @@ import com.example.ui.theme.Slate700
 import com.example.ui.theme.Slate800
 import com.example.ui.theme.Slate900
 import com.example.ui.theme.Slate950
+import com.example.util.QrUnlockManager
+import com.example.util.QrUnlockPayload
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -129,6 +139,7 @@ class ActiveAlarmActivity : ComponentActivity() {
     val requiredCount = intent.getIntExtra(AlarmScheduler.EXTRA_REQUIRED_COUNT, 3).coerceAtLeast(1)
     useDeviceVolume = intent.getBooleanExtra(AlarmScheduler.EXTRA_USE_DEVICE_VOLUME, false)
     val volumePercent = intent.getIntExtra(AlarmScheduler.EXTRA_VOLUME_PERCENT, 85)
+    val qrRequired = intent.getBooleanExtra(AlarmScheduler.EXTRA_QR_REQUIRED, false)
 
     setContent {
       MyApplicationTheme {
@@ -143,6 +154,7 @@ class ActiveAlarmActivity : ComponentActivity() {
           requiredCount = requiredCount,
           useDeviceVolume = useDeviceVolume,
           volumePercent = volumePercent,
+          qrRequired = qrRequired,
           onDismissAlarm = {
             dismissAlarmAndExit()
           }
@@ -377,6 +389,7 @@ fun ActiveAlarmScreen(
   requiredCount: Int,
   useDeviceVolume: Boolean,
   volumePercent: Int,
+  qrRequired: Boolean,
   onDismissAlarm: () -> Unit
 ) {
   val context = LocalContext.current
@@ -388,7 +401,43 @@ fun ActiveAlarmScreen(
   var feedbackMessage by remember { mutableStateOf<String?>(null) }
   var isCorrectFeedback by remember { mutableStateOf(false) }
   var isEscalated by remember { mutableStateOf(false) }
-  var isCompleted by remember { mutableStateOf(false) }
+
+  // Two-stage dismissal: solve the math streak, then scan the printed QR sheet.
+  // If no QR has ever been issued (no token on this device), no printable sheet can exist,
+  // so fall back to math-only instead of trapping the user in an undismissable alarm.
+  val qrToken = remember { QrUnlockManager.getToken(context) }
+  val isQrStageRequired = qrRequired && qrToken != null
+  var isMathCompleted by remember { mutableStateOf(false) }
+  var isQrVerified by remember { mutableStateOf(!isQrStageRequired) }
+  var isScannerOpen by remember { mutableStateOf(false) }
+  var qrFeedbackMessage by remember { mutableStateOf<String?>(null) }
+  var isCameraDenied by remember { mutableStateOf(false) }
+
+  val isCompleted = isMathCompleted && isQrVerified
+
+  val cameraPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { granted ->
+    if (granted) {
+      isCameraDenied = false
+      isScannerOpen = true
+    } else {
+      isCameraDenied = true
+      qrFeedbackMessage = "カメラ権限が許可されていません"
+    }
+  }
+
+  fun startQrScan() {
+    val granted = ContextCompat.checkSelfPermission(
+      context,
+      Manifest.permission.CAMERA
+    ) == PackageManager.PERMISSION_GRANTED
+    if (granted) {
+      isScannerOpen = true
+    } else {
+      cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    }
+  }
 
   // Realtime clock
   var currentTimeString by remember { mutableStateOf("") }
@@ -473,7 +522,11 @@ fun ActiveAlarmScreen(
           )
           Spacer(modifier = Modifier.height(8.dp))
           Text(
-            text = "計算難問 $requiredCount 問を連続正解しました！\n脳が完全に覚醒しました。",
+            text = if (isQrStageRequired) {
+              "計算難問 $requiredCount 問を連続正解し、\n印刷QRコードのスキャンも完了しました！"
+            } else {
+              "計算難問 $requiredCount 問を連続正解しました！\n脳が完全に覚醒しました。"
+            },
             style = MaterialTheme.typography.bodyLarge,
             color = Slate400,
             textAlign = TextAlign.Center
@@ -495,6 +548,192 @@ fun ActiveAlarmScreen(
               text = "アラームを停止して完了",
               fontSize = 18.sp,
               fontWeight = FontWeight.Bold
+            )
+          }
+        }
+      } else if (isMathCompleted) {
+        // 2nd stage: scan the printed wake-up QR code.
+        Column(
+          modifier = Modifier
+            .fillMaxSize()
+            .systemBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+          horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+          if (isScannerOpen) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(Slate900)
+                .border(1.dp, SkyInfo.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Icon(
+                imageVector = Icons.Default.QrCode2,
+                contentDescription = null,
+                tint = SkyInfo,
+                modifier = Modifier.size(22.dp)
+              )
+              Spacer(modifier = Modifier.width(10.dp))
+              Column {
+                Text(
+                  text = "印刷QRコードをスキャン",
+                  style = MaterialTheme.typography.titleMedium,
+                  fontWeight = FontWeight.Bold,
+                  color = Slate100
+                )
+                Text(
+                  text = "QRコードを枠内に映してください",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = Slate400
+                )
+              }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Box(
+              modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color.Black)
+            ) {
+              QrScannerView(
+                modifier = Modifier.fillMaxSize(),
+                onQrDetected = { scanned ->
+                  if (QrUnlockPayload.isValid(scanned, qrToken)) {
+                    isQrVerified = true
+                    isScannerOpen = false
+                    qrFeedbackMessage = null
+                  } else {
+                    qrFeedbackMessage = "このQRコードはMathWakeの起床QRではありません"
+                  }
+                }
+              )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            qrFeedbackMessage?.let { message ->
+              Text(
+                text = message,
+                fontSize = 12.sp,
+                color = CrimsonAlarm,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(bottom = 6.dp)
+              )
+            }
+
+            OutlinedButton(
+              onClick = { isScannerOpen = false },
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+              shape = RoundedCornerShape(14.dp),
+              border = androidx.compose.foundation.BorderStroke(1.dp, Slate700),
+              colors = ButtonDefaults.outlinedButtonColors(contentColor = Slate200)
+            ) {
+              Text("スキャンをやめる", fontSize = 13.sp)
+            }
+          } else {
+            Spacer(modifier = Modifier.weight(0.6f))
+
+            Box(
+              modifier = Modifier
+                .size(96.dp)
+                .clip(CircleShape)
+                .background(SkyInfo.copy(alpha = 0.18f)),
+              contentAlignment = Alignment.Center
+            ) {
+              Icon(
+                imageVector = Icons.Default.QrCode2,
+                contentDescription = "QRコード解除",
+                tint = SkyInfo,
+                modifier = Modifier.size(54.dp)
+              )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+              text = "あと1ステップ：QRコード",
+              style = MaterialTheme.typography.headlineSmall,
+              fontWeight = FontWeight.Black,
+              color = Slate100,
+              textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+              text = "計算クリア！\n印刷したQRコードをスキャンすると解除できます。\nベッドから離れてスキャンしてください。",
+              style = MaterialTheme.typography.bodyMedium,
+              color = Slate400,
+              textAlign = TextAlign.Center,
+              lineHeight = 20.sp
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Button(
+              onClick = { startQrScan() },
+              modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .height(56.dp)
+                .testTag("start_qr_scan_button"),
+              colors = ButtonDefaults.buttonColors(
+                containerColor = SkyInfo,
+                contentColor = Slate950
+              ),
+              shape = RoundedCornerShape(16.dp)
+            ) {
+              Icon(
+                imageVector = Icons.Default.CameraAlt,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+              Text(
+                text = "カメラでQRをスキャン",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold
+              )
+            }
+
+            qrFeedbackMessage?.let { message ->
+              Spacer(modifier = Modifier.height(10.dp))
+              Text(
+                text = message,
+                fontSize = 12.sp,
+                color = CrimsonAlarm,
+                textAlign = TextAlign.Center
+              )
+            }
+
+            if (isCameraDenied) {
+              Spacer(modifier = Modifier.height(8.dp))
+              Text(
+                text = "カメラ権限がないと解除できません。\nMathWake のカメラ権限を許可してから、もう一度お試しください。",
+                fontSize = 11.sp,
+                color = Slate400,
+                textAlign = TextAlign.Center,
+                lineHeight = 15.sp
+              )
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            Text(
+              text = "※ このアラームはQRスキャンなしでは停止できません。",
+              fontSize = 11.sp,
+              color = Slate400,
+              textAlign = TextAlign.Center,
+              modifier = Modifier.padding(bottom = 6.dp)
             )
           }
         }
@@ -648,7 +887,7 @@ fun ActiveAlarmScreen(
                           }
                         }
                         if (streak >= requiredCount) {
-                          isCompleted = true
+                          isMathCompleted = true
                         } else {
                           currentProblem = MathProblemGenerator.generate(currentDifficulty)
                           questionStartTime = System.currentTimeMillis()
@@ -672,7 +911,11 @@ fun ActiveAlarmScreen(
           Spacer(modifier = Modifier.height(14.dp))
 
           Text(
-            text = "※誤答するとカウントが0にリセットされます。\n素早く正解すると難易度が昇格します！",
+            text = if (isQrStageRequired) {
+              "※誤答するとカウントが0にリセットされます。\n※全問正解のあと、印刷したQRコードのスキャンが必要です。"
+            } else {
+              "※誤答するとカウントが0にリセットされます。\n素早く正解すると難易度が昇格します！"
+            },
             fontSize = 11.sp,
             color = Slate400,
             textAlign = TextAlign.Center,

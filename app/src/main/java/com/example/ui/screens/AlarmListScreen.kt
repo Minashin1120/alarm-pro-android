@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeUp
@@ -54,6 +55,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,6 +72,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.model.AlarmEntity
 import com.example.ui.theme.AmberPrimary
 import com.example.ui.theme.CrimsonAlarm
@@ -84,6 +89,7 @@ import com.example.ui.theme.Slate700
 import com.example.ui.theme.Slate800
 import com.example.ui.theme.Slate900
 import com.example.ui.theme.Slate950
+import com.example.util.CameraPermission
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,6 +97,7 @@ fun AlarmListScreen(
   alarms: List<AlarmEntity>,
   permissionStatus: com.example.util.LockdownPermissionStatus,
   onOpenLockdownSetup: () -> Unit,
+  onOpenQrSetup: () -> Unit,
   onAddAlarmClick: () -> Unit,
   onEditAlarmClick: (AlarmEntity) -> Unit,
   onToggleAlarm: (AlarmEntity, Boolean) -> Unit,
@@ -100,8 +107,23 @@ fun AlarmListScreen(
   onPracticeClick: () -> Unit
 ) {
   val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
   val fullyLocked = permissionStatus.isFullLockdownGranted
   val fallbackReady = permissionStatus.allCriticalGranted
+  // Safety net: a QR alarm cannot be dismissed if the camera permission was revoked later.
+  var isCameraGranted by remember { mutableStateOf(CameraPermission.isGranted(context)) }
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) {
+        isCameraGranted = CameraPermission.isGranted(context)
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
+  val hasQrAlarm = alarms.any { it.qrRequired }
+  val needsCameraPermission = hasQrAlarm && !isCameraGranted
+  val qrAccent = if (needsCameraPermission) CrimsonAlarm else SkyInfo
   var alarmToDelete by remember { mutableStateOf<AlarmEntity?>(null) }
   var testAlarmTarget by remember { mutableStateOf<AlarmEntity?>(null) }
 
@@ -141,6 +163,18 @@ fun AlarmListScreen(
           }
         },
         actions = {
+          // Printed wake-up QR sheet (issued once, printed by the user)
+          IconButton(
+            onClick = onOpenQrSetup,
+            modifier = Modifier.testTag("qr_setup_button")
+          ) {
+            Icon(
+              imageVector = Icons.Default.QrCode2,
+              contentDescription = "起床QRコードの印刷",
+              tint = SkyInfo
+            )
+          }
+
           // Lockdown Setup Button
           IconButton(
             onClick = onOpenLockdownSetup,
@@ -292,6 +326,56 @@ fun AlarmListScreen(
             )
           }
         }
+      }
+
+      // Printed wake-up QR entry point (physical defence against sleeping in again)
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 16.dp, vertical = 2.dp)
+          .clip(RoundedCornerShape(14.dp))
+          .background(qrAccent.copy(alpha = 0.10f))
+          .border(1.dp, qrAccent.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+          .clickable { onOpenQrSetup() }
+          .padding(horizontal = 14.dp, vertical = 10.dp)
+          .testTag("qr_banner"),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Icon(
+          imageVector = Icons.Default.QrCode2,
+          contentDescription = null,
+          tint = qrAccent,
+          modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = if (needsCameraPermission) {
+              "⚠️ QR解除アラームにカメラ権限がありません"
+            } else {
+              "起床QRコード（二度寝対策）"
+            },
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = Slate100
+          )
+          Text(
+            text = if (needsCameraPermission) {
+              "このままだとアラームを止められません。タップして許可してください"
+            } else {
+              "印刷してベッドから離れた場所に置くと、QRをスキャンしないと解除できません"
+            },
+            fontSize = 10.sp,
+            color = Slate400,
+            lineHeight = 13.sp
+          )
+        }
+        Text(
+          text = if (needsCameraPermission) "許可する" else "設定",
+          fontSize = 11.sp,
+          fontWeight = FontWeight.Bold,
+          color = qrAccent
+        )
       }
 
       if (alarms.isEmpty()) {
@@ -582,6 +666,15 @@ fun AlarmCard(
           text = "${alarm.requiredCorrectCount}問連続正解で解除",
           color = AmberPrimary
         )
+
+        // Printed QR requirement badge
+        if (alarm.qrRequired) {
+          BadgeChip(
+            text = "印刷QRスキャン必須",
+            icon = Icons.Default.QrCode2,
+            color = SkyInfo
+          )
+        }
 
         // Volume Mode Badge
         if (alarm.useDeviceVolume) {
