@@ -440,8 +440,10 @@ else
   echo "Remote branch verified: ${SHORT_SHA} is on origin/${BRANCH}."
 fi
 
-if [ "$VERIFY" -eq 1 ]; then
-  verify_ci "$SHA"
-else
+if [ "$VERIFY" -eq 0 ]; then
   echo "Skipped CI verification (--no-verify)."
+elif [ "$EXPECT_CI" -eq 0 ]; then
+  echo "Skipped CI verification: no build paths changed."
+else
+  verify_ci "$SHA"
 fi
