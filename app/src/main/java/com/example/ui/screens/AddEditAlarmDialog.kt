@@ -629,7 +629,7 @@ fun AddEditAlarmDialog(
                 )
 
                 Text(
-                  text = "※鳴動中に音量キーで下げられても、自動で ${volumePercent.toInt()}% に強制復帰して鳴り続けます。",
+                  text = "※鳴動中に音量キーで下げられても、自動で ${volumePercent.toInt()}% に強制復帰して鳴り続けます。端末のアラーム音量設定は鳴動中のみ変更し、解除後に元へ戻します。",
                   fontSize = 11.sp,
                   color = Slate400,
                   lineHeight = 15.sp

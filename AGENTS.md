@@ -158,6 +158,10 @@ AlarmScheduler.scheduleAlarm()
 - `AlarmEntity.daysOfWeek` は **月曜=bit0 … 日曜=bit6** のビットマスク（127 = 毎日）。
 - `AlarmEntity.qrRequired` が true のアラームは、数学に加えて**印刷QRのスキャン**が必要。
 - `AlarmService.isAlarmActive` は脱出防止サービスが参照するため、鳴動状態と必ず一致させる。
+- 固定音量モードでは鳴動中だけ `STREAM_ALARM` の音量と ringer mode を上書きする。
+  元の値は SharedPreferences（`mathwake_audio_restore`）に保存し、解除時に
+  `restoreSystemAudioState()` で必ず戻す。ここを外すと端末のアラーム音量設定が
+  アラームのたびに書き換わる。
 
 ## 6. 脱出防止（Lockdown）設計 — 最重要
 

@@ -38,6 +38,14 @@ class AlarmService : Service() {
     const val ACTION_STOP_ALARM = "com.aistudio.mathwake.ACTION_STOP_ALARM"
     const val ACTION_RECLAIM_FOCUS = "com.aistudio.mathwake.ACTION_RECLAIM_FOCUS"
 
+    // The alarm temporarily overrides the device alarm volume / ringer mode, so the
+    // original values must be persisted (not just kept in memory) and restored even if
+    // the process is killed while the alarm is ringing.
+    private const val AUDIO_RESTORE_PREFS = "mathwake_audio_restore"
+    private const val KEY_AUDIO_STATE_SAVED = "audio_state_saved"
+    private const val KEY_ORIGINAL_ALARM_VOLUME = "original_alarm_volume"
+    private const val KEY_ORIGINAL_RINGER_MODE = "original_ringer_mode"
+
     @Volatile
     var isAlarmActive: Boolean = false
       private set
@@ -79,6 +87,7 @@ class AlarmService : Service() {
   private var cachedUseDeviceVolume: Boolean = false
   private var cachedVolumePercent: Int = 85
   private var cachedQrRequired: Boolean = false
+  private var systemAudioStateSaved: Boolean = false
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -86,6 +95,8 @@ class AlarmService : Service() {
     super.onCreate()
     createNotificationChannel()
     initVibrator()
+    // Recover from a previous run that was killed before restoring the device audio state.
+    restoreSystemAudioState()
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -291,6 +302,10 @@ class AlarmService : Service() {
 
     val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
 
+    // Remember the user's own settings before overriding them so they can be put back
+    // when the alarm is dismissed instead of permanently changing the device volume.
+    saveSystemAudioState(audioManager)
+
     // Always force ringer mode to NORMAL to prevent silent/vibrate from muting the alarm
     try {
       if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
@@ -334,6 +349,69 @@ class AlarmService : Service() {
     }
   }
 
+  /**
+   * Persists the current alarm stream volume and ringer mode so [restoreSystemAudioState]
+   * can put them back when the alarm ends. Stored on disk because the service process can be
+   * killed while ringing.
+   */
+  private fun saveSystemAudioState(audioManager: AudioManager) {
+    if (systemAudioStateSaved) return
+    val prefs = getSharedPreferences(AUDIO_RESTORE_PREFS, Context.MODE_PRIVATE)
+    if (prefs.getBoolean(KEY_AUDIO_STATE_SAVED, false)) return
+    try {
+      prefs.edit()
+        .putBoolean(KEY_AUDIO_STATE_SAVED, true)
+        .putInt(
+          KEY_ORIGINAL_ALARM_VOLUME,
+          audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+        )
+        .putInt(KEY_ORIGINAL_RINGER_MODE, audioManager.ringerMode)
+        .commit()
+      systemAudioStateSaved = true
+    } catch (e: Exception) {
+      Log.w("AlarmService", "Could not persist original audio state", e)
+    }
+  }
+
+  /**
+   * Restores the alarm stream volume and ringer mode the app overrode while ringing.
+   * Safe to call when nothing was saved (e.g. the user chose device volume).
+   */
+  private fun restoreSystemAudioState() {
+    val prefs = getSharedPreferences(AUDIO_RESTORE_PREFS, Context.MODE_PRIVATE)
+    if (!prefs.getBoolean(KEY_AUDIO_STATE_SAVED, false)) return
+
+    val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    if (audioManager != null) {
+      val originalVolume = prefs.getInt(KEY_ORIGINAL_ALARM_VOLUME, -1)
+      val maxVolume = try {
+        audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+      } catch (e: Exception) {
+        Log.w("AlarmService", "Could not read max alarm volume", e)
+        -1
+      }
+      if (originalVolume in 0..maxVolume) {
+        try {
+          audioManager.setStreamVolume(AudioManager.STREAM_ALARM, originalVolume, 0)
+        } catch (e: Exception) {
+          Log.w("AlarmService", "Could not restore alarm volume", e)
+        }
+      }
+
+      val originalRingerMode = prefs.getInt(KEY_ORIGINAL_RINGER_MODE, -1)
+      if (originalRingerMode != -1) {
+        try {
+          audioManager.ringerMode = originalRingerMode
+        } catch (e: Exception) {
+          Log.w("AlarmService", "Could not restore ringer mode", e)
+        }
+      }
+    }
+
+    prefs.edit().clear().commit()
+    systemAudioStateSaved = false
+  }
+
   private fun stopAlarm() {
     isAlarmActive = false
     currentAlarmId = -1L
@@ -344,6 +422,9 @@ class AlarmService : Service() {
 
     foregroundEnforcerJob?.cancel()
     foregroundEnforcerJob = null
+
+    // Put the device's own alarm volume / ringer mode back after the forced override.
+    restoreSystemAudioState()
 
     try {
       mediaPlayer?.stop()
