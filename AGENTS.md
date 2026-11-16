@@ -308,6 +308,20 @@ adb shell dpm set-device-owner \
 - DB スキーマを変更する場合は `version` を上げ、`Migration` を追加する
   （`fallbackToDestructiveMigration` は使わない）。
 
+### サブエージェント運用（コスト最適化）
+
+調査とレビューだけをサブエージェントへ分離する。実装・commit・push・CI確認は
+親エージェントが一貫して担当する。全工程を分割すると、前提の再読込と要約ロスで
+逆にコストが増えるため行わない。
+
+- `recon`（`.opencode/agents/recon.md`）: 読み取り専用の調査。関連ファイル、
+  既存パターン、AGENTS.md の制約、リスク、必要テストを簡潔に返す。
+- `reviewer`（`.opencode/agents/reviewer.md`）: 読み取り専用の差分レビュー。
+  AGENTS.md の不変条件と回帰リスクを重大度順に指摘する。
+- どちらも `deepseek-flash#low` と `steps` 上限を使い、edit とサブエージェント起動を拒否する。
+- CI ログは親がファイルへ保存し、`recon` にはそのパスだけを渡す。
+- 詳細な運用例は `.opencode/README.md` を参照する。
+
 ## 8. 変更時のチェックリスト
 
 - [ ] `namespace` / `applicationId` / 署名を変えていない
