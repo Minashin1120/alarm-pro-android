@@ -8,6 +8,10 @@
      - canPerformGestures
    Those capabilities make banking and payment apps warn the user that this app can watch the
    screen, so they stay disabled here. See PowerMenuBlockerAccessibilityService.kt.
+
+   The service is also kept disabled unless an alarm is ringing (AccessibilityController), because
+   payment apps and Play Integrity's App Access Risk flag any enabled non-system service - even
+   one without these capabilities.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"

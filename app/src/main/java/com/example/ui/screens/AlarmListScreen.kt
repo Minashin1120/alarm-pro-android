@@ -314,8 +314,10 @@ fun AlarmListScreen(
             Text(
               text = when {
                 fullyLocked -> "電源メニュー・通知シェード・ロック画面をOSレベルで遮断中（タップで詳細）"
+                fallbackReady && permissionStatus.isAccessibilityAlwaysOn ->
+                  "ユーザー補助が常時オンです。決済アプリが警告する場合はタップして「鳴動中のみ」に変更"
                 fallbackReady && permissionStatus.isAccessibilityFallbackActive ->
-                  "ユーザー補助による遮断のみ。完全固定にはADBでDevice Owner設定が必要（タップで詳細）"
+                  "ユーザー補助は鳴動中だけ自動で有効。完全固定にはADBでDevice Owner設定が必要（タップで詳細）"
                 fallbackReady ->
                   "ユーザー補助による遮断はオフ（任意）。完全固定にはADBでDevice Owner設定が必要（タップで詳細）"
                 else -> "【タップして今すぐ設定】画面重ねて表示などを許可しないとロック画面で強制起動できません"

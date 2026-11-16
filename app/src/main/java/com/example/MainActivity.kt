@@ -119,7 +119,8 @@ fun MathWakeApp(viewModel: AlarmViewModel = viewModel()) {
     }
     // Prompt lockdown setup if a required permission is missing.
     // Device Owner is a manual ADB step, so it is shown in the dialog but not auto-prompted.
-    // The accessibility service is optional (and makes banking apps warn), so never force it.
+    // The accessibility service is optional; it is only enabled while an alarm rings, so never
+    // force the user to keep it on for banking/payment apps to keep working.
     val current = PermissionManager.checkStatus(context)
     if (!current.isOverlayGranted ||
       !current.isExactAlarmGranted ||

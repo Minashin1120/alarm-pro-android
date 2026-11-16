@@ -11,10 +11,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
-import android.text.TextUtils
 import androidx.core.content.ContextCompat
 import com.example.alarm.MathWakeDeviceAdminReceiver
-import com.example.alarm.PowerMenuBlockerAccessibilityService
 
 data class LockdownPermissionStatus(
   val isOverlayGranted: Boolean,
@@ -23,6 +21,7 @@ data class LockdownPermissionStatus(
   val isBatteryOptimizationIgnored: Boolean,
   val isDeviceAdminActive: Boolean,
   val isAccessibilityEnabled: Boolean,
+  val isAccessibilityControlGranted: Boolean,
   val isDeviceOwner: Boolean
 ) {
   /**
@@ -40,9 +39,18 @@ data class LockdownPermissionStatus(
   val isFullLockdownGranted: Boolean
     get() = allCriticalGranted && isDeviceAdminActive && isDeviceOwner
 
-  /** True when the optional accessibility fallback is currently enabled by the user. */
+  /**
+   * True when the optional accessibility fallback can do its job.
+   *
+   * It is either enabled right now (manual mode), or it is enabled automatically only while
+   * an alarm rings because `WRITE_SECURE_SETTINGS` was granted over ADB.
+   */
   val isAccessibilityFallbackActive: Boolean
-    get() = isAccessibilityEnabled
+    get() = isAccessibilityEnabled || isAccessibilityControlGranted
+
+  /** Accessibility is enabled all the time and cannot be turned off automatically. */
+  val isAccessibilityAlwaysOn: Boolean
+    get() = isAccessibilityEnabled && !isDeviceOwner && !isAccessibilityControlGranted
 
   val missingCount: Int
     get() {
@@ -101,7 +109,8 @@ object PermissionManager {
     val isDeviceOwner = dpm?.isDeviceOwnerApp(context.packageName) ?: false
 
     // 7. Accessibility Service (optional fallback for non-Device-Owner installs)
-    val isAccessibilityEnabled = isAccessibilityServiceEnabled(context)
+    val isAccessibilityEnabled = AccessibilityController.isServiceEnabled(context)
+    val isAccessibilityControlGranted = AccessibilityController.hasSecureSettingsPermission(context)
 
     return LockdownPermissionStatus(
       isOverlayGranted = isOverlayGranted,
@@ -110,35 +119,17 @@ object PermissionManager {
       isBatteryOptimizationIgnored = isBatteryOptimizationIgnored,
       isDeviceAdminActive = isDeviceAdminActive,
       isAccessibilityEnabled = isAccessibilityEnabled,
+      isAccessibilityControlGranted = isAccessibilityControlGranted,
       isDeviceOwner = isDeviceOwner
     )
   }
 
-  private fun isAccessibilityServiceEnabled(context: Context): Boolean {
-    val accessibilityEnabled = Settings.Secure.getInt(
-      context.contentResolver,
-      Settings.Secure.ACCESSIBILITY_ENABLED,
-      0
-    ) == 1
-    if (!accessibilityEnabled) return false
-
-    val expected = ComponentName(
-      context,
-      PowerMenuBlockerAccessibilityService::class.java
-    ).flattenToString()
-    val enabled = Settings.Secure.getString(
-      context.contentResolver,
-      Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-    ) ?: return false
-    val splitter = TextUtils.SimpleStringSplitter(':')
-    splitter.setString(enabled)
-    while (splitter.hasNext()) {
-      if (splitter.next().equals(expected, ignoreCase = true)) {
-        return true
-      }
-    }
-    return false
-  }
+  /**
+   * One-time ADB commands that let MathWake enable the accessibility fallback only while an
+   * alarm is ringing instead of leaving it enabled all day.
+   */
+  fun accessibilityGrantCommand(context: Context): String =
+    AccessibilityController.secureSettingsGrantCommand(context)
 
   /**
    * Command for the user to run once from a PC with USB debugging enabled.
@@ -234,8 +225,9 @@ object PermissionManager {
   }
 
   fun requestAccessibilityPermission(context: Context) {
-    // Opens the accessibility service list. There is no public API to toggle this service
-    // programmatically, so the user turns MathWake on/off from here.
+    // Opens the accessibility service list. Android has no public API to toggle an
+    // accessibility service; the automatic on/off during alarms uses WRITE_SECURE_SETTINGS
+    // (see AccessibilityController). This screen is for manual inspection / turning it off.
     val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }

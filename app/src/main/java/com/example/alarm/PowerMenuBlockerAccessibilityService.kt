@@ -10,6 +10,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import com.example.util.AccessibilityController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,8 +37,14 @@ import kotlinx.coroutines.launch
  *  - The power menu is only closed *after* System UI opens it.
  *  - Android 14+ requires "Allow restricted settings" before a sideloaded APK can enable this
  *    accessibility service.
- *  - Any enabled accessibility service can still be flagged by some banking apps. The service is
- *    optional: Device Owner installs do not need it.
+ *  - Any enabled accessibility service can still be flagged by some banking apps, and Play
+ *    Integrity's App Access Risk reports sideloaded apps with an enabled service as
+ *    `UNKNOWN_CAPTURING` / `UNKNOWN_CONTROLLING`. The service is therefore only kept enabled
+ *    while an alarm is ringing: [AccessibilityController] turns it on when the alarm starts and
+ *    removes it when the alarm stops. In Device Owner mode it is not needed at all and disables
+ *    itself.
+ *    (Declaring `isAccessibilityTool="true"` is **not** a workaround: Google restricts that
+ *    flag to disability tools and only reviewed Play apps are excluded from the verdict.)
  */
 class PowerMenuBlockerAccessibilityService : AccessibilityService() {
 
@@ -107,13 +114,23 @@ class PowerMenuBlockerAccessibilityService : AccessibilityService() {
           if (powerBlockerView != null && now >= powerBlockerHideAt) {
             removePowerBlocker()
           }
+          delay(ACTIVE_POLL_INTERVAL_MS)
         } else {
           removeTopShield()
           removePowerBlocker()
           powerBlockerConsumed = false
+
+          // Never stay enabled outside an alarm: payment apps and Play Integrity flag any
+          // enabled accessibility service, even though this one only reacts while ringing.
+          // This also covers a user enabling the service manually or a stale setting after
+          // an app update. Skipped when the app would not be able to re-enable it later.
+          if (AccessibilityController.canDisableWhileIdle(this@PowerMenuBlockerAccessibilityService)) {
+            AccessibilityController.disable(this@PowerMenuBlockerAccessibilityService)
+            disableSelf()
+            return@launch
+          }
+          delay(IDLE_POLL_INTERVAL_MS)
         }
-        // Stay cheap while idle; react quickly only while an alarm is actually ringing.
-        delay(if (AlarmService.isAlarmActive) ACTIVE_POLL_INTERVAL_MS else IDLE_POLL_INTERVAL_MS)
       }
     }
   }

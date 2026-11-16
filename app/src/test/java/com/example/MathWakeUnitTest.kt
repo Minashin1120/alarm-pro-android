@@ -3,6 +3,7 @@ package com.example
 import com.example.alarm.AlarmScheduler
 import com.example.data.model.AlarmEntity
 import com.example.math.MathProblemGenerator
+import com.example.util.AccessibilityServiceList
 import com.example.util.QrUnlockPayload
 import com.example.util.decodeLuminance
 import com.example.util.extractLuminance
@@ -229,6 +230,48 @@ class MathWakeUnitTest {
     val luminance = extractLuminance(buffer, width, 1, width, height)
       ?: error("Y plane extraction failed")
     assertNull(decodeLuminance(luminance, width, height))
+  }
+
+  @Test
+  fun testAccessibilityServiceList_addPreservesOtherServices() {
+    val ours = "com.aistudio.mathwake.qvxn/com.example.alarm.PowerMenuBlockerAccessibilityService"
+    val talkback = "com.google.android.marvin.talkback/.TalkBackService"
+
+    val result = AccessibilityServiceList.add(talkback, ours)
+
+    assertEquals("$talkback:$ours", result)
+    assertEquals(listOf(talkback, ours), AccessibilityServiceList.parse(result))
+  }
+
+  @Test
+  fun testAccessibilityServiceList_addDoesNotDuplicate() {
+    val ours = "com.aistudio.mathwake.qvxn/com.example.alarm.PowerMenuBlockerAccessibilityService"
+
+    val result = AccessibilityServiceList.add(ours, ours)
+
+    assertEquals(ours, result)
+    assertEquals(listOf(ours), AccessibilityServiceList.parse(result))
+  }
+
+  @Test
+  fun testAccessibilityServiceList_removeOnlyOurService() {
+    val ours = "com.aistudio.mathwake.qvxn/com.example.alarm.PowerMenuBlockerAccessibilityService"
+    val talkback = "com.google.android.marvin.talkback/.TalkBackService"
+
+    val result = AccessibilityServiceList.remove("$talkback:$ours", ours)
+
+    assertEquals(talkback, result)
+    assertEquals(listOf(talkback), AccessibilityServiceList.parse(result))
+  }
+
+  @Test
+  fun testAccessibilityServiceList_handlesEmptySettings() {
+    val ours = "com.aistudio.mathwake.qvxn/com.example.alarm.PowerMenuBlockerAccessibilityService"
+
+    assertEquals(emptyList<String>(), AccessibilityServiceList.parse(null))
+    assertEquals(emptyList<String>(), AccessibilityServiceList.parse(""))
+    assertEquals(ours, AccessibilityServiceList.add(null, ours))
+    assertEquals("", AccessibilityServiceList.remove(ours, ours))
   }
 }
 

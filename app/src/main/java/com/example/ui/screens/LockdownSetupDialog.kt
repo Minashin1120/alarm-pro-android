@@ -185,7 +185,7 @@ fun LockdownSetupDialog(
         Spacer(modifier = Modifier.height(14.dp))
 
         Text(
-          text = "Androidの制限により、権限がないとロック画面への全画面強制起動やバックグラウンドアラームがOSにブロックされてしまいます。下記の必須設定を有効化してください（ユーザー補助サービスは任意です）。",
+          text = "Androidの制限により、権限がないとロック画面への全画面強制起動やバックグラウンドアラームがOSにブロックされてしまいます。下記の必須設定を有効化してください（ユーザー補助サービスは任意で、鳴動中だけ自動的に有効になります）。",
           fontSize = 12.sp,
           color = Slate400,
           lineHeight = 17.sp
@@ -264,21 +264,71 @@ fun LockdownSetupDialog(
         Spacer(modifier = Modifier.height(10.dp))
 
         // 6. Accessibility Service (optional fallback when Device Owner is unavailable)
+        val accessibilityAutoManaged =
+          status.isDeviceOwner || status.isAccessibilityControlGranted
+        val openAccessibilitySettings: () -> Unit = {
+          PermissionManager.requestAccessibilityPermission(context)
+        }
         PermissionItemCard(
-          title = "ユーザー補助サービス（任意）",
-          description = "Device Owner 未設定の端末で、アラーム鳴動中に通知シェードや電源メニューを検知して自動で閉じる補助機能です。画面の内容やキー入力は読み取りません。\n\n" +
-            "※ 有効にしている間は、銀行・決済アプリが「ユーザー補助をオフにしてください」と警告することがあります。その場合はオフにしてください。Device Owner を設定済みなら、オフにしても脱出防止は維持されます。\n\n" +
-            "Android 14以降でAPKを直接インストールした場合は、アプリ情報 → 右上メニュー →「制限付き設定を許可」も必要です。",
-          isGranted = status.isAccessibilityEnabled,
+          title = "ユーザー補助サービス（任意・鳴動中のみ）",
+          description = buildString {
+            append(
+              "アラーム鳴動中だけ、通知シェードや電源メニューが開かれたことを検知して" +
+                "自動で閉じる補助機能です。画面の内容やキー入力は読み取りません。\n\n"
+            )
+            when {
+              status.isDeviceOwner ->
+                append(
+                  "Device Owner 設定済みのため、このサービスは不要です。" +
+                    "有効になっている場合は自動でオフになります。"
+                )
+              status.isAccessibilityControlGranted ->
+                append(
+                  "自動切替の準備ができています。アラームが鳴ったときだけ有効になり、" +
+                    "停止すると自動でオフになります。"
+                )
+              else -> {
+                append(
+                  if (status.isAccessibilityEnabled) {
+                    "現在「常時オン」になっているため、銀行・決済アプリが警告する原因になります。"
+                  } else {
+                    "手動でオンにすると「常時オン」になり、銀行・決済アプリが警告する原因になります。"
+                  }
+                )
+                append(
+                  "PCのADBで次のコマンドを1回実行すると、鳴動中だけ自動でオン/オフできます。\n\n" +
+                    PermissionManager.accessibilityGrantCommand(context)
+                )
+              }
+            }
+            if (status.isAccessibilityAlwaysOn) {
+              append(
+                "\n\n※ 今すぐ警告を止めたい場合は「ユーザー補助をオフにする」から" +
+                  "設定画面を開いてオフにできます（脱出防止は弱くなります）。"
+              )
+            }
+          },
+          isGranted = accessibilityAutoManaged,
           icon = Icons.Default.Lock,
-          buttonText = "ユーザー補助を有効化",
+          buttonText = "ADBコマンドをコピー",
           onClick = {
-            PermissionManager.requestAccessibilityPermission(context)
+            val command = PermissionManager.accessibilityGrantCommand(context)
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("ADB command", command))
+            Toast.makeText(context, "ADBコマンドをコピーしました", Toast.LENGTH_SHORT).show()
           },
           isOptional = true,
-          actionTextWhenGranted = "ユーザー補助をオフにする",
-          onActionWhenGranted = {
-            PermissionManager.requestAccessibilityPermission(context)
+          actionTextWhenGranted = "ユーザー補助の設定を開く",
+          onActionWhenGranted = openAccessibilitySettings,
+          secondaryButtonText = if (status.isAccessibilityAlwaysOn) {
+            "ユーザー補助をオフにする"
+          } else {
+            null
+          },
+          onSecondaryClick = if (status.isAccessibilityAlwaysOn) {
+            openAccessibilitySettings
+          } else {
+            null
           }
         )
 
@@ -328,7 +378,7 @@ fun LockdownSetupDialog(
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-              text = "・Device Owner設定時: ロックタスクモードで電源メニュー・通知シェード・ロック画面・ホーム/履歴をOSレベルで無効化します。\n・未設定時: ユーザー補助サービスを有効にしていれば、通知シェード/電源メニューを検知して即座に閉じます（任意）。Android 12以降では電源ボタン自体は横取りできないため、完全な遮断にはDevice Ownerが必要です。\n・端末ロック中: アラーム画面をロック画面の上に全画面表示し、他アプリへの離脱を防ぎます。",
+              text = "・Device Owner設定時: ロックタスクモードで電源メニュー・通知シェード・ロック画面・ホーム/履歴をOSレベルで無効化します。\n・未設定時: ユーザー補助サービスが使える場合、通知シェード/電源メニューを検知して即座に閉じます（任意）。サービスはアラーム鳴動中だけ有効になり、停止すると自動でオフになります。Android 12以降では電源ボタン自体は横取りできないため、完全な遮断にはDevice Ownerが必要です。\n・端末ロック中: アラーム画面をロック画面の上に全画面表示し、他アプリへの離脱を防ぎます。",
               fontSize = 11.sp,
               color = Slate400,
               lineHeight = 16.sp
@@ -372,7 +422,9 @@ fun PermissionItemCard(
   onClick: () -> Unit,
   isOptional: Boolean = false,
   actionTextWhenGranted: String? = null,
-  onActionWhenGranted: (() -> Unit)? = null
+  onActionWhenGranted: (() -> Unit)? = null,
+  secondaryButtonText: String? = null,
+  onSecondaryClick: (() -> Unit)? = null
 ) {
   val grantedActionLabel = actionTextWhenGranted
   val grantedAction = onActionWhenGranted
@@ -471,6 +523,24 @@ fun PermissionItemCard(
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold
           )
+        }
+        if (secondaryButtonText != null && onSecondaryClick != null) {
+          Spacer(modifier = Modifier.height(8.dp))
+          OutlinedButton(
+            onClick = onSecondaryClick,
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(38.dp),
+            shape = RoundedCornerShape(10.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Slate400.copy(alpha = 0.6f))
+          ) {
+            Text(
+              text = secondaryButtonText,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.Bold,
+              color = Slate200
+            )
+          }
         }
       } else if (grantedActionLabel != null && grantedAction != null) {
         Spacer(modifier = Modifier.height(10.dp))

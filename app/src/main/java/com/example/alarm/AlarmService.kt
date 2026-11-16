@@ -21,6 +21,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.ActiveAlarmActivity
 import com.example.R
+import com.example.util.AccessibilityController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -123,6 +124,11 @@ class AlarmService : Service() {
 
     currentAlarmId = alarmId
     isAlarmActive = true
+
+    // Enable the optional accessibility fallback only for the duration of this alarm.
+    // It must be enabled after isAlarmActive is set, otherwise the service would see an
+    // idle state and immediately disable itself again.
+    AccessibilityController.enableForAlarm(this)
 
     // 1. Start foreground with high priority full-screen intent
     val notification = buildAlarmNotification(
@@ -416,6 +422,9 @@ class AlarmService : Service() {
     isAlarmActive = false
     currentAlarmId = -1L
     isActivityForeground = false
+
+    // Remove the accessibility fallback again so payment apps stop warning while idle.
+    AccessibilityController.disable(this)
 
     volumeLockJob?.cancel()
     volumeLockJob = null

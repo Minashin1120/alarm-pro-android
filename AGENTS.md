@@ -130,6 +130,8 @@ app/src/main/java/com/example/
 │   └── viewmodel/AlarmViewModel.kt  # CRUD、アラーム登録、テスト鳴動
 └── util/
     ├── PermissionManager.kt         # 権限状態の集約と設定画面遷移
+    ├── AccessibilityController.kt   # ユーザー補助を鳴動中だけ有効化/無効化
+    ├── AccessibilityServiceList.kt  # ENABLED_ACCESSIBILITY_SERVICES の純粋ロジック
     ├── QrUnlockPayload.kt           # QRペイロードの生成・検証（純粋ロジック）
     ├── QrUnlockManager.kt           # 端末内トークンの保存
     └── QrCode*.kt                   # QR生成・デコード・印刷/共有
@@ -137,6 +139,7 @@ app/src/main/java/com/example/
 app/src/test/java/com/example/       # JUnit4 + Robolectric
 app/src/main/res/xml/                # accessibility / device_admin / backup 設定
 scripts/setup-device-owner.sh        # ADB で Device Owner を設定する補助スクリプト
+scripts/grant-accessibility-control.sh # ADB で WRITE_SECURE_SETTINGS を付与する
 ```
 
 ## 5. アラームの動作フロー
@@ -158,6 +161,8 @@ AlarmScheduler.scheduleAlarm()
 - `AlarmEntity.daysOfWeek` は **月曜=bit0 … 日曜=bit6** のビットマスク（127 = 毎日）。
 - `AlarmEntity.qrRequired` が true のアラームは、数学に加えて**印刷QRのスキャン**が必要。
 - `AlarmService.isAlarmActive` は脱出防止サービスが参照するため、鳴動状態と必ず一致させる。
+- `AlarmService` は `isAlarmActive = true` の直後に Accessibility フォールバックを有効化し、
+  `stopAlarm()` で無効化する（`AccessibilityController`）。常時オンにしない。
 - 固定音量モードでは鳴動中だけ `STREAM_ALARM` の音量と ringer mode を上書きする。
   元の値は SharedPreferences（`mathwake_audio_restore`）に保存し、解除時に
   `restoreSystemAudioState()` で必ず戻す。ここを外すと端末のアラーム音量設定が
@@ -187,8 +192,29 @@ AlarmScheduler.scheduleAlarm()
      false にし、イベントの `className` / `packageName` だけで検知する。
      これらを true にすると銀行・決済アプリが「ユーザー補助をオフにしてください」と警告するため、
      安易に戻さない。
-   - **任意機能として扱う**。`allCriticalGranted` に含めない。有効なままだと決済アプリの警告対象に
-     なり得るので、セットアップ UI からオフにできる導線を維持し、Device Owner 設定時は不要と案内する。
+   - **鳴動中だけ有効にする（必須）**。`AccessibilityController` が担当する。
+     - `AlarmService` が `isAlarmActive = true` にした直後に
+       `AccessibilityController.enableForAlarm()` を呼び、`stopAlarm()` で `disable()` する。
+     - サービス自身も、アイドル状態で `canDisableWhileIdle()` が true なら `disableSelf()` する。
+       アプリ更新後に設定が残っている場合や、ユーザーが手動でオンにした場合の保険。
+     - `canDisableWhileIdle()` は **Device Owner** または **`WRITE_SECURE_SETTINGS`（ADBで付与）**
+       のときだけ true。どちらも無い端末で `disableSelf()` すると次のアラームで再開できず、
+       脱出防止が永久に壊れるため。
+     - Device Owner はロックタスクで足りるので、このサービスを有効化しない（有効なら自動でオフ）。
+     - `WRITE_SECURE_SETTINGS` は `./scripts/grant-accessibility-control.sh` で1回付与する
+       （`pm grant` + Android 13+ は `cmd appops set ... ACCESS_RESTRICTED_SETTINGS allow`）。
+       アプリ更新・再起動後も維持される。
+     - `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES` を書き換えるときは
+       `AccessibilityServiceList` で他のサービスを消さない。元の
+       `ACCESSIBILITY_ENABLED` の値も SharedPreferences に保存して戻す。
+   - **`isAccessibilityTool="true"` で検出を回避しようとしない**。Google Play は障害者支援ツールに
+     限定しており、審査済みの Play 配信アプリしか Play Integrity の App Access Risk から除外されない。
+     サイドロードした本アプリでは意味がなく、ポリシー違反になる。
+   - **常時オンにしない理由**: 決済アプリは「読み取り権限があるか」ではなく
+     **非システムのユーザー補助サービスが有効か**で判定する。Play Integrity の App Access Risk は
+     サイドロードアプリを `UNKNOWN_CONTROLLING` として報告するため、能力を最小にしても
+     常時オンでは検出される。詳細は「既知の落とし穴」を参照。
+   - **任意機能として扱う**。`allCriticalGranted` に含めない。Device Owner 設定時は不要と案内する。
 
 ### 印刷QRコード解除（物理的な起床証明）
 
@@ -220,7 +246,11 @@ AlarmScheduler.scheduleAlarm()
 - `allCriticalGranted`: Overlay / Exact Alarm / 通知 / 電池最適化除外 が揃った状態（簡易遮断モード）。
   Accessibility は**含めない**（任意機能）
 - `isFullLockdownGranted`: 上記 + Device Admin + **Device Owner**（完全ロックダウン）
-- `isAccessibilityFallbackActive`: 任意の Accessibility フォールバックが有効かどうか（表示専用）
+- `isAccessibilityControlGranted`: `WRITE_SECURE_SETTINGS` があり、鳴動中だけ自動で
+  オン/オフできる状態か（ADB で1回付与）
+- `isAccessibilityFallbackActive`: 任意の Accessibility フォールバックが使える状態か
+  （現在有効、または自動切替の許可済み。表示専用）
+- `isAccessibilityAlwaysOn`: 有効なままで自動オフできない状態か（決済アプリ警告の原因）
 - `missingCount`: セットアップ UI の未設定件数（Accessibility は数えない）
 
 権限を追加・変更したら、以下をすべて更新する。
@@ -243,8 +273,14 @@ adb shell dpm set-device-owner \
 - **root 化ではない。** ADB の shell ユーザーから `DevicePolicyManager` の管理権限を与える。
 - 端末にアカウントが残っている、既に Device Owner / 仕事用プロファイルがある場合は失敗する。
 - 多くの端末では **ファクトリーリセットが必要**。解除も基本的に初期化が必要。
-- Android 14+ で APK を直接インストールした場合、Accessibility を有効にする前に
+- Android 14+ で APK を直接インストールした場合、Accessibility を手動で有効にする前に
   **設定 → アプリ → MathWake → 右上メニュー →「制限付き設定を許可」** が必要。
+  （`WRITE_SECURE_SETTINGS` 経由の自動切替はこの画面を経由しない）
+- Device Owner ならロックタスクで足りるため、Accessibility を有効にする必要はない。
+  既に有効な場合、アプリはアイドル時に自動でオフにする。
+- Device Owner を使わず Accessibility フォールバックを使う場合は、
+  `./scripts/grant-accessibility-control.sh` で `WRITE_SECURE_SETTINGS` を付与する。
+  これが無い端末ではサービスを常時オンにするしかなく、決済アプリの警告対象になる。
 - セットアップ UI の説明文は、この制約をユーザーに正しく伝える形を維持する。
 
 ### 触る際の注意
@@ -281,6 +317,7 @@ adb shell dpm set-device-owner \
 - [ ] `AlarmEntity` のフィールド追加時に既存 DB からの移行を考慮した
 - [ ] `AlarmService.isAlarmActive` と画面のライフサイクルが矛盾していない
 - [ ] 脱出防止の Device Owner 経路と Accessibility 経路の両方を壊していない
+- [ ] Accessibility サービスをアイドル時に残していない（鳴動中だけ有効）
 - [ ] 表示文字列が日本語として自然で、実装の制約と矛盾していない
 - [ ] 純粋ロジック（問題生成・次回時刻計算など）にテストを追加した
 - [ ] `git diff --check` が通る
@@ -296,9 +333,16 @@ adb shell dpm set-device-owner \
 - **Foreground Service**: Android 8+ は `startForegroundService()`、14+ は
   `foregroundServiceType="mediaPlayback"` と `FOREGROUND_SERVICE_MEDIA_PLAYBACK` が必須。
 - **Accessibility は OS に停止され得る**: バッテリー最適化除外やサービス再起動を前提にする。
-- **決済アプリの警告**: ユーザー補助サービスが有効なだけでも警告するアプリがある。
-  `canRetrieveWindowContent` / `canRequestFilterKeyEvents` を true に戻すと警告されやすい。
-  サービスは任意扱いなので、必須化・常時オンの誘導をしない。
+- **決済アプリの警告（重要）**: 多くの決済アプリは「ユーザー補助が有効か」だけで判定し、
+  読み取り能力の有無は見ない。さらに Play Integrity の App Access Risk は、
+  サイドロードされたアプリに有効な非システム Accessibility Service があると
+  `UNKNOWN_CONTROLLING` を返す（Play 配信・システムアプリは `KNOWN_`、審査済みツールは除外）。
+  本アプリは GitHub の APK を直接入れるため、能力を最小にしても常時オンでは検出され得る。
+  - 対策は「鳴動中だけ有効化」であり、`isAccessibilityTool="true"` ではない。
+  - `canRetrieveWindowContent` / `canRequestFilterKeyEvents` を true に戻さない。
+  - サービスは任意扱いなので、必須化・常時オンの誘導をしない。
+  - 常時オンになっている端末では、セットアップ UI のバナーから
+    `WRITE_SECURE_SETTINGS` の付与（自動切替）または手動オフへ誘導する。
 - **メーカー差**: Xiaomi / Samsung などは電源メニューのパッケージ名・クラス名が異なる。
   検知条件を追加するときは `isSystemUiPackage()` / `isPowerClass()` / `isShadeClass()` を拡張する。
 - **`EXPAND_STATUS_BAR` は補助**: 主たる遮断は overlay と Accessibility 側。
@@ -325,6 +369,7 @@ adb shell dpm set-device-owner \
   - `AlarmEntity` の時刻・曜日サマリー・難易度ラベル
   - `AlarmScheduler.calculateNextTriggerTime()`
   - QR解除ペイロードの生成・検証（`QrUnlockPayload`）と、ZXingでの生成→デコード往復
+  - Accessibility の有効サービス一覧の追加/削除（他のサービスを消さないこと）
 - Robolectric と Compose UI test の依存は導入済み。UI テストを追加する場合は
   `app/src/androidTest` と既存の testTag を活用する。
 - 端末依存の挙動（Device Owner / 電源メニュー / 通知シェード）は自動テストではなく、
@@ -354,12 +399,14 @@ adb shell dpm set-device-owner \
 | アラーム画面・終了処理 | `app/src/main/java/com/example/ActiveAlarmActivity.kt` |
 | Device Owner 制御 | `app/src/main/java/com/example/alarm/LockTaskController.kt` |
 | Accessibility 遮断 | `app/src/main/java/com/example/alarm/PowerMenuBlockerAccessibilityService.kt` |
+| Accessibility の鳴動中のみ制御 | `app/src/main/java/com/example/util/AccessibilityController.kt` |
 | 権限判定 | `app/src/main/java/com/example/util/PermissionManager.kt` |
 | セットアップ UI | `app/src/main/java/com/example/ui/screens/LockdownSetupDialog.kt` |
 | 一覧・状態バナー | `app/src/main/java/com/example/ui/screens/AlarmListScreen.kt` |
 | データモデル | `app/src/main/java/com/example/data/model/AlarmEntity.kt` |
 | 問題生成 | `app/src/main/java/com/example/math/MathProblemGenerator.kt` |
 | Device Owner 設定 | `scripts/setup-device-owner.sh` |
+| Accessibility 自動切替の許可 | `scripts/grant-accessibility-control.sh` |
 | SSH push と CI 確認 | `scripts/push-with-ssh.sh` |
 | CI | `.github/workflows/android.yml` |
 | 署名付きリリース | `.github/workflows/release.yml` |
